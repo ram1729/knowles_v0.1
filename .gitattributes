@@ -1,0 +1,10 @@
+# Force LF so shell scripts in workflows and Python run correctly on Linux CI.
+* text=auto eol=lf
+
+# Treat supplied media as binary (never line-ending munged).
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.mp3 binary
+*.mp4 binary
+*.wav binary

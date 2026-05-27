@@ -1,0 +1,104 @@
+name: Knowles — Produce episode
+
+# Stages 2-7. Triggered when you comment "/produce N" (or "/skip") on a
+# candidates issue. Only repo owners/collaborators/members can trigger it.
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  produce:
+    if: >-
+      github.event.issue.state == 'open' &&
+      startsWith(github.event.comment.body, '/produce') &&
+      contains(fromJSON('["OWNER","COLLABORATOR","MEMBER"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install system + python deps
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu
+          pip install -r requirements.txt
+
+      - name: Parse selection + load issue body
+        id: parse
+        env:
+          BODY: ${{ github.event.comment.body }}
+          ISSUE: ${{ github.event.issue.number }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          N=$(printf '%s' "$BODY" | grep -oiE '/produce[[:space:]]+[0-9]+' | grep -oE '[0-9]+' | head -1)
+          [ -z "$N" ] && N=1
+          echo "n=$N" >> "$GITHUB_OUTPUT"
+          gh issue view "$ISSUE" --json body -q .body > issue_body.md
+          printf 'Working on candidate **#%s**…' "$N" > report.md
+
+      - name: Acknowledge
+        env:
+          ISSUE: ${{ github.event.issue.number }}
+          GH_TOKEN: ${{ github.token }}
+        run: gh issue comment "$ISSUE" --body "👀 Producing candidate #${{ steps.parse.outputs.n }} — this takes a few minutes."
+
+      - name: Produce (verify -> write -> voice -> assemble -> thumbnail -> publish)
+        id: produce
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
+          KNOWLES_PRIVACY: ${{ vars.KNOWLES_PRIVACY }}
+          KNOWLES_PUBLISH_AT: ${{ vars.KNOWLES_PUBLISH_AT }}
+        run: |
+          set +e
+          python -m knowles.pipeline produce \
+            --from-body issue_body.md \
+            --select "${{ steps.parse.outputs.n }}" \
+            --report report.md
+          echo "rc=$?" >> "$GITHUB_OUTPUT"
+          set -e
+
+      - name: Upload episode artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: knowles-episode
+          path: episodes/**
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Comment result on the issue
+        if: always()
+        env:
+          ISSUE: ${{ github.event.issue.number }}
+          GH_TOKEN: ${{ github.token }}
+        run: gh issue comment "$ISSUE" --body-file report.md
+
+      - name: Fail the run if production errored
+        if: ${{ steps.produce.outputs.rc != '0' && steps.produce.outputs.rc != '3' }}
+        run: |
+          echo "Production failed (rc=${{ steps.produce.outputs.rc }})."
+          exit 1
+
+  skip:
+    if: >-
+      github.event.issue.state == 'open' &&
+      startsWith(github.event.comment.body, '/skip') &&
+      contains(fromJSON('["OWNER","COLLABORATOR","MEMBER"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close the week
+        env:
+          ISSUE: ${{ github.event.issue.number }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment "$ISSUE" --body "Skipped. A missed week is fine. — Knowles"
+          gh issue close "$ISSUE"

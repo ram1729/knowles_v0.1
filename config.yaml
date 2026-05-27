@@ -1,0 +1,60 @@
+# The Knowles Files — show configuration.
+# Tunables only. The locked identity/prompts live in knowles/prompts.py.
+
+show:
+  name: "The Knowles Files"
+  host: "Gregory Knowles"
+
+models:
+  # Free-tier friendly. Search grounding is used for find + verify.
+  # If any model 404s (preview models get retired), swap to the alternative noted.
+  text: "gemini-2.5-flash"               # GA, supports Google Search grounding
+  tts: "gemini-2.5-flash-preview-tts"    # supports the "Alnilam" voice. Alt: gemini-3.1-flash-tts-preview
+  image: "gemini-2.5-flash-image"        # "Nano Banana". Alt: gemini-3.1-flash-image-preview. May need billing; Pillow fallback exists.
+
+voice:
+  name: "Alnilam"
+  # Frozen director's note (Section 4 of the spec). Prepended to every TTS call.
+  director_note: >-
+    Read this as Gregory Knowles: a dry, wry English man in his seventies, a
+    retired London black-cab driver. Unhurried and calm, with warmth underneath
+    the dryness. Conversational, like telling a story to one person over a cup of
+    tea. Let the short sentences land. Honour the pauses. Slightly slower than
+    normal narration.
+
+audio:
+  sample_rate: 24000        # Gemini TTS outputs 24kHz mono 16-bit PCM
+  # Paragraphs longer than this many characters get split for TTS robustness.
+  tts_chunk_chars: 1800
+
+video:
+  width: 1920
+  height: 1080
+  fps: 24
+  # Fallback background colour if assets/background.png is absent (hex, no #).
+  bg_color: "0b0d12"
+
+captions:
+  max_chars_per_cue: 84     # ~2 lines
+  min_cue_seconds: 1.2
+
+thumbnail:
+  width: 1280
+  height: 720
+  # FIXED house style line (Section 3). Only scene + title words change weekly.
+  style_line: >-
+    cinematic, moody, warm low light, slightly desaturated; high contrast so he
+    reads on a small phone screen.
+
+publish:
+  privacy: "private"        # private | unlisted | public
+  category_id: "27"         # Education
+  tags:
+    - "true crime"
+    - "scams"
+    - "fraud"
+    - "Gregory Knowles"
+    - "The Knowles Files"
+  description_footer: >-
+    The Knowles Files is a weekly true-story show. Every factual claim in the
+    reveal is sourced. Mind how you go.

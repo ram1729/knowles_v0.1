@@ -1,0 +1,44 @@
+name: Knowles — Find candidates
+
+# Stage 1. Runs weekly (and on demand) and opens an issue with 3 candidate
+# stories. You reply "/produce N" on that issue to make the episode.
+
+on:
+  schedule:
+    - cron: "0 9 * * 1"   # Mondays 09:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  find:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Find 3 candidates
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python -m knowles.pipeline find --out candidates.md --json candidates.json
+
+      - name: Open the picker issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create "knowles-candidates" --color 5319e7 \
+            --description "Knowles weekly story picks" 2>/dev/null || true
+          TITLE="Knowles candidates — $(date -u +%Y-%m-%d)"
+          gh issue create \
+            --title "$TITLE" \
+            --body-file candidates.md \
+            --label "knowles-candidates"

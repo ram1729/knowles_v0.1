@@ -1,0 +1,231 @@
+"""The Knowles Files orchestrator.
+
+Subcommands:
+  find      Stage 1 -> 3 candidates (writes candidates.md + candidates.json).
+  produce   Stages 2-7 for a chosen candidate (verify, write, voice, assemble,
+            thumbnail, publish). Honours the "DO NOT PROCEED" verify gate.
+  run       Local interactive: find, pick at the prompt, then produce.
+
+Exit codes: 0 ok, 3 = verify gate said DO NOT PROCEED (a clean "missed week").
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from datetime import date
+from pathlib import Path
+
+from . import captions, config, stage4_voice, stage5_assemble, stage6_thumbnail, stage7_publish
+from .stage1_find import Candidate, find
+from .stage2_verify import verify
+from .stage3_write import write
+
+GATE_EXIT = 3
+
+_MARKER = "KNOWLES_CANDIDATES"
+_MARKER_RE = re.compile(rf"<!--{_MARKER}\s*(.*?)\s*{_MARKER}-->", re.DOTALL)
+
+
+# --------------------------------------------------------------------------- #
+# helpers
+# --------------------------------------------------------------------------- #
+def _slugify(text: str, limit: int = 48) -> str:
+    s = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    return s[:limit].strip("-") or "episode"
+
+
+def _candidates_payload(candidates: list[Candidate]) -> str:
+    return json.dumps([c.__dict__ for c in candidates], ensure_ascii=False)
+
+
+def _candidates_from_text(text: str) -> list[Candidate]:
+    m = _MARKER_RE.search(text)
+    raw = m.group(1) if m else text
+    return [Candidate.from_dict(d) for d in json.loads(raw)]
+
+
+def _build_description(candidate: Candidate) -> str:
+    parts = [candidate.summary, ""]
+    if candidate.sources:
+        parts.append("Sources:")
+        parts += [f"- {s}" for s in candidate.sources]
+        parts.append("")
+    footer = config.cfg("publish", "description_footer", default="")
+    if footer:
+        parts.append(footer.strip())
+    return "\n".join(parts).strip()
+
+
+# --------------------------------------------------------------------------- #
+# commands
+# --------------------------------------------------------------------------- #
+def cmd_find(args: argparse.Namespace) -> int:
+    markdown, candidates = find()
+    payload = _candidates_payload(candidates)
+
+    body = (
+        f"{markdown}\n\n---\n"
+        f"**Reply `/produce N`** (N = 1, 2 or 3) on this issue to verify, produce "
+        f"and upload that story as a private video. A reply of `/skip` closes the week.\n\n"
+        f"<!--{_MARKER}\n{payload}\n{_MARKER}-->\n"
+    )
+    Path(args.out).write_text(body, encoding="utf-8")
+    Path(args.json).write_text(payload, encoding="utf-8")
+    print(body)
+    print(f"\n[wrote {args.out} and {args.json}]", file=sys.stderr)
+    return 0
+
+
+def _select_candidate(args: argparse.Namespace) -> Candidate:
+    if args.candidate_file:
+        data = json.loads(Path(args.candidate_file).read_text(encoding="utf-8"))
+        return Candidate.from_dict(data)
+
+    text = Path(args.from_body).read_text(encoding="utf-8") if args.from_body else \
+        Path(args.candidates_file).read_text(encoding="utf-8")
+    candidates = _candidates_from_text(text)
+    idx = args.select
+    match = next((c for c in candidates if c.id == idx), None)
+    if match is None and 1 <= idx <= len(candidates):
+        match = candidates[idx - 1]
+    if match is None:
+        raise SystemExit(f"No candidate #{idx} found (have {len(candidates)}).")
+    return match
+
+
+def produce(candidate: Candidate, *, do_publish: bool, do_thumbnail: bool, report: Path | None) -> int:
+    slug = f"{date.today():%Y-%m-%d}-{_slugify(candidate.hook)}"
+    ep = config.episode_dir(slug)
+    lines: list[str] = [f"## The Knowles Files — {slug}", "", f"**Story:** {candidate.hook}", ""]
+
+    # Stage 2 — verify (the trust gate).
+    fact = verify(candidate.story_and_sources())
+    (ep / "factsheet.md").write_text(fact.text, encoding="utf-8")
+    if not fact.proceed:
+        lines += [f"**DO NOT PROCEED** — {fact.reason}", "", "A missed week is fine. A false reveal is not.",
+                  "", "See `factsheet.md` for the verifier's reasoning."]
+        _emit(lines, report)
+        print("DO NOT PROCEED — core fact unverified. Stopping.", file=sys.stderr)
+        return GATE_EXIT
+
+    # Stage 3 — write.
+    script = write(fact.text)
+    (ep / "script.txt").write_text(script, encoding="utf-8")
+    words = len(script.split())
+
+    # Stage 4 — voice.
+    narration, duration = stage4_voice.narrate(script, ep / "narration.wav")
+
+    # Captions, offset by the intro-music length so they track the narration.
+    intro = config.ASSETS / "intro.mp3"
+    offset = stage5_assemble.probe_duration(intro) if intro.exists() else 0.0
+    srt = captions.build_srt(script, duration, ep / "captions.srt", start_offset=offset)
+
+    # Stage 5 — assemble.
+    mp3 = stage5_assemble.build_audio(narration, ep / "episode.mp3")
+    mp4 = stage5_assemble.build_video(mp3, srt, ep / "episode.mp4")
+
+    # Stage 6 — thumbnail + title concept.
+    concept = stage6_thumbnail.concept_for(script)
+    title = concept.video_title or candidate.hook
+    thumb: Path | None = None
+    thumb_method = "skipped"
+    if do_thumbnail:
+        thumb, thumb_method = stage6_thumbnail.build_thumbnail(concept, ep / "thumbnail.png")
+
+    description = _build_description(candidate)
+    meta = {
+        "slug": slug, "title": title, "words": words, "duration_sec": round(duration, 1),
+        "thumbnail_method": thumb_method, "files": {
+            "script": "script.txt", "audio": "episode.mp3", "video": "episode.mp4",
+            "captions": "captions.srt", "thumbnail": "thumbnail.png" if thumb else None,
+        },
+    }
+
+    lines += [f"**Title:** {title}", f"**Length:** ~{words} words / {duration/60:.1f} min",
+              f"**Thumbnail:** {thumb_method}", ""]
+
+    # Stage 7 — publish.
+    if do_publish:
+        result = stage7_publish.upload(mp4, title, description, thumb)
+        meta["publish"] = {"video_id": result.video_id, "url": result.url,
+                           "privacy": result.privacy, "thumbnail_set": result.thumbnail_set}
+        lines += [f"**Uploaded ({result.privacy}):** {result.url}",
+                  "" if result.thumbnail_set else "_(thumbnail not set — channel may need verification)_"]
+        print(result.url)
+    else:
+        lines += ["**Publish skipped** (`--no-publish`). Artifacts are in "
+                  f"`episodes/{slug}/`."]
+
+    (ep / "meta.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+    _emit(lines, report)
+    return 0
+
+
+def cmd_produce(args: argparse.Namespace) -> int:
+    candidate = _select_candidate(args)
+    return produce(candidate, do_publish=not args.no_publish,
+                   do_thumbnail=not args.no_thumbnail,
+                   report=Path(args.report) if args.report else None)
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    markdown, candidates = find()
+    print(markdown)
+    choice = input("\nPick a candidate (1/2/3, or 'q' to quit): ").strip()
+    if choice.lower() in {"q", "quit", ""}:
+        print("No pick. Closing the week.")
+        return 0
+    idx = int(choice)
+    candidate = next((c for c in candidates if c.id == idx), candidates[idx - 1])
+    return produce(candidate, do_publish=not args.no_publish,
+                   do_thumbnail=not args.no_thumbnail, report=None)
+
+
+def _emit(lines: list[str], report: Path | None) -> None:
+    text = "\n".join(lines)
+    if report:
+        report.write_text(text, encoding="utf-8")
+    print("\n" + text, file=sys.stderr)
+
+
+# --------------------------------------------------------------------------- #
+# arg parsing
+# --------------------------------------------------------------------------- #
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="knowles", description="The Knowles Files pipeline")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    f = sub.add_parser("find", help="Stage 1: find 3 candidate stories")
+    f.add_argument("--out", default="candidates.md")
+    f.add_argument("--json", default="candidates.json")
+    f.set_defaults(func=cmd_find)
+
+    pr = sub.add_parser("produce", help="Stages 2-7 for a chosen candidate")
+    src = pr.add_mutually_exclusive_group(required=True)
+    src.add_argument("--candidate-file", help="JSON file with a single candidate object")
+    src.add_argument("--candidates-file", help="JSON array of candidates (use with --select)")
+    src.add_argument("--from-body", help="Text/issue-body file containing the candidates marker")
+    pr.add_argument("--select", type=int, default=1, help="Which candidate id/index to produce")
+    pr.add_argument("--no-publish", action="store_true")
+    pr.add_argument("--no-thumbnail", action="store_true")
+    pr.add_argument("--report", help="Write a markdown summary here (for the issue comment)")
+    pr.set_defaults(func=cmd_produce)
+
+    r = sub.add_parser("run", help="Local interactive: find + pick + produce")
+    r.add_argument("--no-publish", action="store_true")
+    r.add_argument("--no-thumbnail", action="store_true")
+    r.set_defaults(func=cmd_run)
+
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,35 @@
+# Secrets / credentials
+.env
+client_secret*.json
+token.json
+*.token.json
+service_account*.json
+
+# Episode outputs (large media)
+episodes/*/
+!episodes/.gitkeep
+
+# Generated working files
+candidates.json
+candidates.md
+selected.json
+
+# Local-only supplied assets (binary media)
+assets/intro.mp3
+assets/outro.mp3
+assets/background.png
+assets/knowles_portrait.png
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+*.egg-info/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
