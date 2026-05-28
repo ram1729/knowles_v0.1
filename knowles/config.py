@@ -66,13 +66,32 @@ def publish_at() -> str | None:
 
 
 def load_json_secret(env_name: str, file_fallback: str) -> dict[str, Any] | None:
-    """Read JSON from an env var (preferred for CI) or a local file."""
+    """Read JSON from an env var (preferred for CI) or a local file.
+
+    Tolerates the usual copy-paste accidents: a BOM prefix, surrounding
+    whitespace, or wrapping quotes that some editors/terminals insert when
+    the user copies a value into a GitHub secret box.
+    """
     raw = env(env_name)
     if raw:
-        return json.loads(raw)
+        cleaned = raw.lstrip("﻿").strip()
+        # Peel one layer of matched wrapping quotes if both ends agree.
+        if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in ("'", '"'):
+            cleaned = cleaned[1:-1].strip()
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError as exc:
+            first = cleaned[0] if cleaned else "(empty)"
+            raise RuntimeError(
+                f"Env var {env_name} is set ({len(raw)} chars) but is not valid JSON: "
+                f"{exc.msg} at char {exc.pos}. First non-whitespace character: {first!r}. "
+                f"Expected the JSON object printed by scripts/auth_youtube.py, which "
+                f"starts with '{{' — re-paste it without wrapping quotes."
+            ) from exc
     path = ROOT / file_fallback
     if path.exists():
-        return json.loads(path.read_text(encoding="utf-8"))
+        # utf-8-sig transparently strips a BOM if one snuck into the file.
+        return json.loads(path.read_text(encoding="utf-8-sig"))
     return None
 
 
