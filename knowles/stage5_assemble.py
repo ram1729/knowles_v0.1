@@ -90,7 +90,17 @@ def build_audio(narration: Path, out_mp3: Path) -> Path:
     chain_labels = "".join(f"[a{i}]" for i in range(len(segments)))
     filt = ";".join(chains) + f";{chain_labels}concat=n={len(segments)}:v=0:a=1[out]"
     cmd += ["-filter_complex", filt, "-map", "[out]", "-c:a", "libmp3lame", "-q:a", "3", str(out_mp3)]
-    _run(cmd)
+
+    if len(segments) == 1:
+        _run(cmd)
+        return out_mp3
+    # With music: try the full sting+narration+sting concat; if it fails, fall
+    # back to narration-only so the episode still ships.
+    try:
+        _run(cmd)
+    except RuntimeError as exc:
+        print(f"[warn] intro/outro mix failed, using narration only: {exc}", file=__import__("sys").stderr)
+        _run([_ffmpeg(), "-y", "-i", str(narration), "-c:a", "libmp3lame", "-q:a", "3", str(out_mp3)])
     return out_mp3
 
 
@@ -119,15 +129,13 @@ def build_video(audio: Path, subtitles: Path | None, out_mp4: Path, background: 
         bg_img = None
 
     work = out_mp4.parent
-    cmd = [_ffmpeg(), "-y"]
-    if bg_img is not None:
-        cmd += ["-loop", "1", "-i", str(bg_img)]
-    else:
-        cmd += ["-f", "lavfi", "-i", f"color=c=0x{bg_color}:s={w}x{h}:r={fps}"]
-    cmd += ["-i", str(audio)]
+    base_vf = (
+        f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+        f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps}"
+    )
 
-    # Scale/pad the visual to the target frame, then burn captions.
-    vf = f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps}"
+    # Build the optional captions clause.
+    caption_vf = ""
     if subtitles and subtitles.exists():
         # Run with cwd at the work dir and reference the bare filename to dodge
         # Windows drive-letter colon escaping inside the filter graph.
@@ -135,18 +143,31 @@ def build_video(audio: Path, subtitles: Path | None, out_mp4: Path, background: 
         local = work / ("captions.ass" if is_ass else "captions.srt")
         if subtitles.resolve() != local.resolve():
             shutil.copyfile(subtitles, local)
+        fonts = ":fontsdir=/usr/share/fonts" if Path("/usr/share/fonts").exists() else ""
         if is_ass:
-            # The .ass carries its own (large, left-column) style.
-            vf += f",subtitles={local.name}"
+            caption_vf = f",subtitles={local.name}{fonts}"  # .ass carries its own style
         else:
             style = "FontName=DejaVu Serif,Fontsize=22,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=1,MarginV=60,Alignment=2"
-            vf += f",subtitles={local.name}:force_style='{style}'"
+            caption_vf = f",subtitles={local.name}{fonts}:force_style='{style}'"
 
-    cmd += [
-        "-vf", vf,
-        "-c:v", "libx264", "-tune", "stillimage", "-pix_fmt", "yuv420p", "-r", str(fps),
-        "-c:a", "aac", "-b:a", "192k",
-        "-shortest", str(out_mp4.name),
-    ]
-    _run(cmd, cwd=work)
+    def _cmd(vf: str) -> list[str]:
+        c = [_ffmpeg(), "-y"]
+        if bg_img is not None:
+            c += ["-loop", "1", "-i", str(bg_img)]
+        else:
+            c += ["-f", "lavfi", "-i", f"color=c=0x{bg_color}:s={w}x{h}:r={fps}"]
+        c += ["-i", str(audio), "-vf", vf,
+              "-c:v", "libx264", "-tune", "stillimage", "-pix_fmt", "yuv420p", "-r", str(fps),
+              "-c:a", "aac", "-b:a", "192k", "-shortest", str(out_mp4.name)]
+        return c
+
+    # Try with captions; if the burn fails (e.g. libass/font issue), still ship
+    # a clean captionless video rather than losing the whole episode.
+    if caption_vf:
+        try:
+            _run(_cmd(base_vf + caption_vf), cwd=work)
+            return out_mp4
+        except RuntimeError as exc:
+            print(f"[warn] caption burn failed, rendering without captions: {exc}", file=__import__("sys").stderr)
+    _run(_cmd(base_vf), cwd=work)
     return out_mp4
