@@ -105,8 +105,18 @@ def produce(candidate: Candidate, *, do_publish: bool, do_thumbnail: bool, repor
     fact = verify(candidate.story_and_sources())
     (ep / "factsheet.md").write_text(fact.text, encoding="utf-8")
     if not fact.proceed:
-        lines += [f"**DO NOT PROCEED** — {fact.reason}", "", "A missed week is fine. A false reveal is not.",
-                  "", "See `factsheet.md` for the verifier's reasoning."]
+        # Surface the verifier's own reasoning in the comment so the rejection
+        # is judgeable without downloading the artifact. Trim to keep it readable.
+        reasoning = fact.text.strip()
+        if len(reasoning) > 2500:
+            reasoning = reasoning[:2500].rstrip() + "\n\n… (truncated — full text in factsheet.md)"
+        lines += [
+            f"**DO NOT PROCEED** — {fact.reason}", "",
+            "A missed week is fine. A false reveal is not. Try `/produce N` with a "
+            "different candidate, or `/skip` to close the week.", "",
+            "<details><summary>Verifier's reasoning</summary>", "",
+            reasoning, "", "</details>",
+        ]
         _emit(lines, report)
         print("DO NOT PROCEED — core fact unverified. Stopping.", file=sys.stderr)
         return GATE_EXIT
