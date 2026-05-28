@@ -52,36 +52,72 @@ def probe_duration(path: Path) -> float:
 
 
 def build_audio(narration: Path, out_mp3: Path) -> Path:
-    """Concatenate optional intro + narration + optional outro into one MP3."""
+    """Concatenate a short intro sting + narration + a short outro sting.
+
+    The intro/outro music files are trimmed to the first N seconds (config
+    audio.intro_seconds / audio.outro_seconds) with gentle fades, rather than
+    playing the whole track.
+    """
     intro = config.ASSETS / "intro.mp3"
     outro = config.ASSETS / "outro.mp3"
-    parts = [p for p in (intro if intro.exists() else None, narration, outro if outro.exists() else None) if p]
+    intro_s = float(config.cfg("audio", "intro_seconds", default=5))
+    outro_s = float(config.cfg("audio", "outro_seconds", default=5))
+
+    # (path, trim_seconds | None). None means "use the whole file" (narration).
+    segments: list[tuple[Path, float | None]] = []
+    if intro.exists():
+        segments.append((intro, intro_s))
+    segments.append((narration, None))
+    if outro.exists():
+        segments.append((outro, outro_s))
 
     cmd = [_ffmpeg(), "-y"]
-    for p in parts:
-        cmd += ["-i", str(p)]
+    for path, _ in segments:
+        cmd += ["-i", str(path)]
 
-    norm = "".join(
-        f"[{i}:a]aformat=sample_rates=48000:channel_layouts=stereo[a{i}];" for i in range(len(parts))
-    )
-    chain = "".join(f"[a{i}]" for i in range(len(parts)))
-    filt = f"{norm}{chain}concat=n={len(parts)}:v=0:a=1[out]"
+    chains = []
+    for i, (_, trim) in enumerate(segments):
+        f = f"[{i}:a]aformat=sample_rates=48000:channel_layouts=stereo"
+        if trim:
+            fade_out_at = max(0.0, trim - 0.8)
+            f += (
+                f",atrim=0:{trim},asetpts=N/SR/TB"
+                f",afade=t=in:st=0:d=0.3,afade=t=out:st={fade_out_at}:d=0.8"
+            )
+        f += f"[a{i}]"
+        chains.append(f)
+
+    chain_labels = "".join(f"[a{i}]" for i in range(len(segments)))
+    filt = ";".join(chains) + f";{chain_labels}concat=n={len(segments)}:v=0:a=1[out]"
     cmd += ["-filter_complex", filt, "-map", "[out]", "-c:a", "libmp3lame", "-q:a", "3", str(out_mp3)]
     _run(cmd)
     return out_mp3
 
 
-def build_video(audio: Path, srt: Path | None, out_mp4: Path) -> Path:
-    """Render a static-visual MP4 with burned-in captions, matched to audio length."""
+def build_video(audio: Path, srt: Path | None, out_mp4: Path, background: Path | None = None) -> Path:
+    """Render a static-visual MP4 with burned-in captions, matched to audio length.
+
+    Visual source priority:
+      1. `background` (the episode thumbnail) — persists for the whole video,
+      2. assets/background.png,
+      3. a solid colour from config.
+    """
     w = int(config.cfg("video", "width", default=1920))
     h = int(config.cfg("video", "height", default=1080))
     fps = int(config.cfg("video", "fps", default=24))
     bg_color = config.cfg("video", "bg_color", default="0b0d12")
-    bg_img = config.ASSETS / "background.png"
+    asset_bg = config.ASSETS / "background.png"
+
+    if background and background.exists():
+        bg_img: Path | None = background
+    elif asset_bg.exists():
+        bg_img = asset_bg
+    else:
+        bg_img = None
 
     work = out_mp4.parent
     cmd = [_ffmpeg(), "-y"]
-    if bg_img.exists():
+    if bg_img is not None:
         cmd += ["-loop", "1", "-i", str(bg_img)]
     else:
         cmd += ["-f", "lavfi", "-i", f"color=c=0x{bg_color}:s={w}x{h}:r={fps}"]

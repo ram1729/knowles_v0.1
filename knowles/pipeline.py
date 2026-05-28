@@ -129,22 +129,24 @@ def produce(candidate: Candidate, *, do_publish: bool, do_thumbnail: bool, repor
     # Stage 4 — voice.
     narration, duration = stage4_voice.narrate(script, ep / "narration.wav")
 
-    # Captions, offset by the intro-music length so they track the narration.
+    # Captions, offset by the (trimmed) intro-sting length so they track the
+    # narration rather than the music.
     intro = config.ASSETS / "intro.mp3"
-    offset = stage5_assemble.probe_duration(intro) if intro.exists() else 0.0
+    offset = float(config.cfg("audio", "intro_seconds", default=5)) if intro.exists() else 0.0
     srt = captions.build_srt(script, duration, ep / "captions.srt", start_offset=offset)
 
-    # Stage 5 — assemble.
-    mp3 = stage5_assemble.build_audio(narration, ep / "episode.mp3")
-    mp4 = stage5_assemble.build_video(mp3, srt, ep / "episode.mp4")
-
-    # Stage 6 — thumbnail + title concept.
+    # Stage 6 (built before the video so it can serve as the visual) —
+    # thumbnail + title concept.
     concept = stage6_thumbnail.concept_for(script)
     title = concept.video_title or candidate.hook
     thumb: Path | None = None
     thumb_method = "skipped"
     if do_thumbnail:
         thumb, thumb_method = stage6_thumbnail.build_thumbnail(concept, ep / "thumbnail.png")
+
+    # Stage 5 — assemble. The thumbnail persists as the video's static visual.
+    mp3 = stage5_assemble.build_audio(narration, ep / "episode.mp3")
+    mp4 = stage5_assemble.build_video(mp3, srt, ep / "episode.mp4", background=thumb)
 
     description = _build_description(candidate)
     meta = {

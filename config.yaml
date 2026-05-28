@@ -26,6 +26,10 @@ audio:
   sample_rate: 24000        # Gemini TTS outputs 24kHz mono 16-bit PCM
   # Paragraphs longer than this many characters get split for TTS robustness.
   tts_chunk_chars: 1800
+  # Use only the first N seconds of the intro/outro music (with fades), not the
+  # whole track. Set to a large number to use (almost) the full file.
+  intro_seconds: 5
+  outro_seconds: 5
 
 video:
   width: 1920
