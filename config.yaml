@@ -41,6 +41,11 @@ captions:
 thumbnail:
   width: 1280
   height: 720
+  # Engine: hybrid (FREE: AI scene + your real portrait composited on top) |
+  #         nano_banana (Gemini image, may need billing) | pillow (no network).
+  engine: "hybrid"
+  # Free AI background provider model (Pollinations). "flux" or "turbo".
+  pollinations_model: "flux"
   # FIXED house style line (Section 3). Only scene + title words change weekly.
   style_line: >-
     cinematic, moody, warm low light, slightly desaturated; high contrast so he

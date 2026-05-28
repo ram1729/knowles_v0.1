@@ -35,6 +35,19 @@ jobs:
           sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu
           pip install -r requirements.txt
 
+      # Best-effort: enables auto background-removal of the portrait for the
+      # hybrid thumbnail. If it fails, the pipeline uses assets/knowles_cutout.png
+      # (if present) or degrades to the Pillow card — never blocks the run.
+      - name: Cache rembg model
+        uses: actions/cache@v4
+        with:
+          path: ~/.u2net
+          key: u2net-model-v1
+
+      - name: Install thumbnail extras (optional)
+        continue-on-error: true
+        run: pip install rembg onnxruntime
+
       - name: Parse selection + load issue body
         id: parse
         env:
