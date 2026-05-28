@@ -99,6 +99,7 @@ jobs:
       # was built; the verify-gate path leaves it untouched).
       - name: Persist episode ledger
         if: always()
+        continue-on-error: true
         run: |
           if ! git diff --quiet -- produced.json; then
             git config user.name "knowles-bot"

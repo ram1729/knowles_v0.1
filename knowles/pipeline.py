@@ -210,10 +210,22 @@ def produce(candidate: Candidate, *, do_publish: bool, do_thumbnail: bool, repor
 
 
 def cmd_produce(args: argparse.Namespace) -> int:
-    candidate = _select_candidate(args)
-    return produce(candidate, do_publish=not args.no_publish,
-                   do_thumbnail=not args.no_thumbnail,
-                   report=Path(args.report) if args.report else None)
+    report = Path(args.report) if args.report else None
+    try:
+        candidate = _select_candidate(args)
+        return produce(candidate, do_publish=not args.no_publish,
+                       do_thumbnail=not args.no_thumbnail, report=report)
+    except Exception:  # noqa: BLE001 - self-report any crash to the issue comment
+        import traceback
+        tb = traceback.format_exc()
+        print(tb, file=sys.stderr)
+        if report:
+            report.write_text(
+                "**Production error — the run crashed before finishing.**\n\n"
+                "```\n" + tb[-3500:] + "\n```\n",
+                encoding="utf-8",
+            )
+        return 1
 
 
 def cmd_run(args: argparse.Namespace) -> int:
