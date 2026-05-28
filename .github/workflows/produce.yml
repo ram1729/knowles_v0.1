@@ -11,6 +11,10 @@ permissions:
   contents: read
   issues: write
 
+# Silence the Node.js 20 deprecation notice on older action versions.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   produce:
     if: >-
@@ -38,8 +42,11 @@ jobs:
           ISSUE: ${{ github.event.issue.number }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          N=$(printf '%s' "$BODY" | grep -oiE '/produce[[:space:]]+[0-9]+' | grep -oE '[0-9]+' | head -1)
-          [ -z "$N" ] && N=1
+          # `|| true` keeps the pipefail+errexit shell from aborting if the
+          # comment lacks an explicit number (we want to default to 1).
+          N=$(printf '%s' "$BODY" | grep -oiE '/produce[[:space:]]+[0-9]+' | grep -oE '[0-9]+' | head -1 || true)
+          if ! printf '%s' "$N" | grep -qE '^[0-9]+$'; then N=1; fi
+          echo "Parsed candidate selection: $N"
           echo "n=$N" >> "$GITHUB_OUTPUT"
           gh issue view "$ISSUE" --json body -q .body > issue_body.md
           printf 'Working on candidate **#%s**…' "$N" > report.md
@@ -57,13 +64,17 @@ jobs:
           YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
           KNOWLES_PRIVACY: ${{ vars.KNOWLES_PRIVACY }}
           KNOWLES_PUBLISH_AT: ${{ vars.KNOWLES_PUBLISH_AT }}
+          N: ${{ steps.parse.outputs.n }}
         run: |
           set +e
+          echo "Running pipeline with --select '${N}'"
           python -m knowles.pipeline produce \
             --from-body issue_body.md \
-            --select "${{ steps.parse.outputs.n }}" \
+            --select "${N:-1}" \
             --report report.md
-          echo "rc=$?" >> "$GITHUB_OUTPUT"
+          RC=$?
+          echo "Pipeline exit code: $RC"
+          echo "rc=$RC" >> "$GITHUB_OUTPUT"
           set -e
 
       - name: Upload episode artifacts
