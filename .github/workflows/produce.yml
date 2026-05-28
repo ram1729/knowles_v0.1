@@ -55,7 +55,11 @@ jobs:
         env:
           ISSUE: ${{ github.event.issue.number }}
           GH_TOKEN: ${{ github.token }}
-        run: gh issue comment "$ISSUE" --body "👀 Producing candidate #${{ steps.parse.outputs.n }} — this takes a few minutes."
+          N: ${{ steps.parse.outputs.n }}
+        # NB: block scalar — YAML treats ` #` in a plain scalar as a comment,
+        # which truncated this line and broke the previous run.
+        run: |
+          gh issue comment "$ISSUE" --body "👀 Producing candidate number ${N} — this takes a few minutes."
 
       - name: Produce (verify -> write -> voice -> assemble -> thumbnail -> publish)
         id: produce
