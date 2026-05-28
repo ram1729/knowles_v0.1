@@ -130,23 +130,29 @@ def produce(candidate: Candidate, *, do_publish: bool, do_thumbnail: bool, repor
     narration, duration = stage4_voice.narrate(script, ep / "narration.wav")
 
     # Captions, offset by the (trimmed) intro-sting length so they track the
-    # narration rather than the music.
+    # narration rather than the music. SRT is a selectable track; the styled
+    # ASS (big, left-column) is what gets burned into the video.
     intro = config.ASSETS / "intro.mp3"
     offset = float(config.cfg("audio", "intro_seconds", default=5)) if intro.exists() else 0.0
     srt = captions.build_srt(script, duration, ep / "captions.srt", start_offset=offset)
+    ass = captions.build_ass(script, duration, ep / "captions.ass", start_offset=offset)
 
-    # Stage 6 (built before the video so it can serve as the visual) —
-    # thumbnail + title concept.
+    # Stage 6 (built before the video so the plate can serve as the visual) —
+    # thumbnail (YouTube still) + video plate (Knowles right, left caption stage).
     concept = stage6_thumbnail.concept_for(script)
     title = concept.video_title or candidate.hook
     thumb: Path | None = None
+    plate: Path | None = None
     thumb_method = "skipped"
     if do_thumbnail:
-        thumb, thumb_method = stage6_thumbnail.build_thumbnail(concept, ep / "thumbnail.png")
+        thumb, plate, thumb_method = stage6_thumbnail.build_visuals(
+            concept, ep / "thumbnail.png", ep / "video_plate.png"
+        )
 
-    # Stage 5 — assemble. The thumbnail persists as the video's static visual.
+    # Stage 5 — assemble. The plate persists as the video's static visual; the
+    # big left-column captions burn over its darkened left stage.
     mp3 = stage5_assemble.build_audio(narration, ep / "episode.mp3")
-    mp4 = stage5_assemble.build_video(mp3, srt, ep / "episode.mp4", background=thumb)
+    mp4 = stage5_assemble.build_video(mp3, ass, ep / "episode.mp4", background=plate)
 
     description = _build_description(candidate)
     meta = {
@@ -154,6 +160,7 @@ def produce(candidate: Candidate, *, do_publish: bool, do_thumbnail: bool, repor
         "thumbnail_method": thumb_method, "files": {
             "script": "script.txt", "audio": "episode.mp3", "video": "episode.mp4",
             "captions": "captions.srt", "thumbnail": "thumbnail.png" if thumb else None,
+            "video_plate": "video_plate.png" if plate else None,
         },
     }
 

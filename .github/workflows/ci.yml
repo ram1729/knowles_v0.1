@@ -1,0 +1,48 @@
+name: CI — syntax & import check
+
+# Fast guardrail: compiles the package and imports every module on each push,
+# so syntax/import errors surface in ~20s instead of mid-produce.
+
+on:
+  push:
+    paths:
+      - "knowles/**"
+      - "scripts/**"
+      - "requirements.txt"
+      - ".github/workflows/ci.yml"
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Byte-compile the package
+        run: python -m compileall -q knowles scripts
+
+      - name: Import every module
+        run: |
+          python - <<'PY'
+          import importlib, pkgutil
+          import knowles
+          ok = True
+          for m in pkgutil.iter_modules(knowles.__path__, "knowles."):
+              try:
+                  importlib.import_module(m.name)
+                  print("ok  ", m.name)
+              except Exception as exc:
+                  ok = False
+                  print("FAIL", m.name, "->", type(exc).__name__, exc)
+          raise SystemExit(0 if ok else 1)
+          PY

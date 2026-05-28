@@ -94,11 +94,14 @@ def build_audio(narration: Path, out_mp3: Path) -> Path:
     return out_mp3
 
 
-def build_video(audio: Path, srt: Path | None, out_mp4: Path, background: Path | None = None) -> Path:
+def build_video(audio: Path, subtitles: Path | None, out_mp4: Path, background: Path | None = None) -> Path:
     """Render a static-visual MP4 with burned-in captions, matched to audio length.
 
+    `subtitles` may be a styled .ass (preferred — carries its own large
+    left-column style) or a plain .srt (a default style is forced on).
+
     Visual source priority:
-      1. `background` (the episode thumbnail) — persists for the whole video,
+      1. `background` (the episode video plate) — persists for the whole video,
       2. assets/background.png,
       3. a solid colour from config.
     """
@@ -123,16 +126,21 @@ def build_video(audio: Path, srt: Path | None, out_mp4: Path, background: Path |
         cmd += ["-f", "lavfi", "-i", f"color=c=0x{bg_color}:s={w}x{h}:r={fps}"]
     cmd += ["-i", str(audio)]
 
-    # Scale/pad the visual to the target frame, then optionally burn captions.
+    # Scale/pad the visual to the target frame, then burn captions.
     vf = f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps}"
-    if srt and srt.exists():
+    if subtitles and subtitles.exists():
         # Run with cwd at the work dir and reference the bare filename to dodge
         # Windows drive-letter colon escaping inside the filter graph.
-        local = work / "captions.srt"
-        if srt.resolve() != local.resolve():
-            shutil.copyfile(srt, local)
-        style = "FontName=DejaVu Serif,Fontsize=22,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=1,MarginV=60,Alignment=2"
-        vf += f",subtitles=captions.srt:force_style='{style}'"
+        is_ass = subtitles.suffix.lower() == ".ass"
+        local = work / ("captions.ass" if is_ass else "captions.srt")
+        if subtitles.resolve() != local.resolve():
+            shutil.copyfile(subtitles, local)
+        if is_ass:
+            # The .ass carries its own (large, left-column) style.
+            vf += f",subtitles={local.name}"
+        else:
+            style = "FontName=DejaVu Serif,Fontsize=22,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=1,MarginV=60,Alignment=2"
+            vf += f",subtitles={local.name}:force_style='{style}'"
 
     cmd += [
         "-vf", vf,

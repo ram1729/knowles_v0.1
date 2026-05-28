@@ -256,30 +256,50 @@ def _darken_for_text(base: Image.Image, text_side: str) -> Image.Image:
     return Image.alpha_composite(base.convert("RGBA"), scrim)
 
 
+def _darken_left_panel(base: Image.Image) -> Image.Image:
+    """Lay a semi-opaque 'caption stage' over the left column, fading into the
+    scene, so large left-aligned captions read clearly for senior viewers."""
+    w, h = base.size
+    panel_ratio = float(config.cfg("captions", "panel_ratio", default=0.46))
+    panel_w = int(w * panel_ratio)
+    feather = int(w * 0.06)
+    scrim = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    sd = ImageDraw.Draw(scrim)
+    sd.rectangle([0, 0, panel_w, h], fill=(0, 0, 0, 165))
+    for i in range(feather):  # soft right edge into the imagery
+        a = int(165 * (1 - i / feather))
+        sd.line([(panel_w + i, 0), (panel_w + i, h)], fill=(0, 0, 0, a))
+    return Image.alpha_composite(base.convert("RGBA"), scrim)
+
+
 # --------------------------------------------------------------------------- #
 # composers
 # --------------------------------------------------------------------------- #
-def _compose_hybrid(concept: Concept, out_path: Path) -> tuple[Path, str]:
-    w = int(config.cfg("thumbnail", "width", default=1280))
-    h = int(config.cfg("thumbnail", "height", default=720))
-
+def _hybrid_layers(concept: Concept, w: int, h: int) -> tuple[Image.Image, Image.Image | None, str]:
+    """Generate the shared layers once: AI (or gradient) background + Knowles
+    cutout. Reused for both the thumbnail and the video plate."""
     bg = _pollinations_bg(concept.scene, w, h, _seed_from(concept.title_words))
     bg_method = "ai" if bg is not None else "gradient"
     base = bg if bg is not None else _gradient_bg(w, h)
+    return base, _knowles_cutout(), bg_method
 
-    person = _knowles_cutout()
-    if person is None:
-        # No cutout available — fall back to the portrait card so we still ship.
-        return _compose_pillow(concept, out_path)[0], "hybrid_no_cutout"
 
-    knowles_side = concept.side
-    text_side = "right" if knowles_side == "left" else "left"
-
-    base = _darken_for_text(base, text_side)
-    base = _paste_knowles(base, person, knowles_side)
-    base = _draw_title(base, concept.title_words, text_side=text_side)
+def _render_thumbnail(base: Image.Image, person: Image.Image | None, concept: Concept, out_path: Path) -> None:
+    """YouTube still: Knowles on the RIGHT, big title words on the LEFT."""
+    base = _darken_for_text(base, "left")
+    if person is not None:
+        base = _paste_knowles(base, person, "right")
+    base = _draw_title(base, concept.title_words, text_side="left")
     base.convert("RGB").save(out_path, "PNG")
-    return out_path, f"hybrid_{bg_method}"
+
+
+def _render_plate(base: Image.Image, person: Image.Image | None, out_path: Path) -> None:
+    """Video visual: Knowles on the RIGHT, darkened LEFT caption stage, NO title
+    (the burned-in captions live in that left column instead)."""
+    base = _darken_left_panel(base)
+    if person is not None:
+        base = _paste_knowles(base, person, "right")
+    base.convert("RGB").save(out_path, "PNG")
 
 
 def _compose_pillow(concept: Concept, out_path: Path) -> tuple[Path, str]:
@@ -334,23 +354,46 @@ def _compose_nano_banana(concept: Concept, out_path: Path) -> tuple[Path, str] |
 # --------------------------------------------------------------------------- #
 # public entry
 # --------------------------------------------------------------------------- #
-def build_thumbnail(concept: Concept, out_path: Path) -> tuple[Path, str]:
-    """Return (path, method). Engine chosen by config thumbnail.engine; always
-    degrades gracefully so a thumbnail is produced."""
+def build_visuals(concept: Concept, thumb_path: Path, plate_path: Path) -> tuple[Path, Path, str]:
+    """Produce both the YouTube thumbnail and the video plate.
+
+    Returns (thumbnail_path, plate_path, method). The plate is the persistent
+    video visual (Knowles right + darkened left caption stage). Engine chosen
+    by config thumbnail.engine; always degrades gracefully.
+    """
+    import shutil
+
     engine = str(config.cfg("thumbnail", "engine", default="hybrid")).lower()
+    w = int(config.cfg("thumbnail", "width", default=1280))
+    h = int(config.cfg("thumbnail", "height", default=720))
 
     if engine == "nano_banana":
-        result = _compose_nano_banana(concept, out_path)
+        result = _compose_nano_banana(concept, thumb_path)
         if result:
-            return result
-        # fall through to hybrid if the image model declined / errored
-        engine = "hybrid"
+            # nano_banana returns a baked image; the plate reuses it.
+            shutil.copyfile(thumb_path, plate_path)
+            return thumb_path, plate_path, result[1]
+        engine = "hybrid"  # model declined/errored — fall through
 
     if engine == "pillow":
-        return _compose_pillow(concept, out_path)
+        _compose_pillow(concept, thumb_path)
+        shutil.copyfile(thumb_path, plate_path)
+        return thumb_path, plate_path, "pillow"
 
-    # default: hybrid
+    # default: hybrid — render both from one set of layers.
     try:
-        return _compose_hybrid(concept, out_path)
+        base, person, bg_method = _hybrid_layers(concept, w, h)
+        _render_thumbnail(base.copy(), person, concept, thumb_path)
+        _render_plate(base.copy(), person, plate_path)
+        method = f"hybrid_{bg_method}" + ("" if person is not None else "_nocutout")
+        return thumb_path, plate_path, method
     except Exception:
-        return _compose_pillow(concept, out_path)
+        _compose_pillow(concept, thumb_path)
+        shutil.copyfile(thumb_path, plate_path)
+        return thumb_path, plate_path, "pillow"
+
+
+def build_thumbnail(concept: Concept, out_path: Path) -> tuple[Path, str]:
+    """Back-compat single-output helper (thumbnail only)."""
+    thumb, _plate, method = build_visuals(concept, out_path, out_path.with_name("video_plate.png"))
+    return thumb, method
