@@ -22,7 +22,8 @@ from .stage1_find import Candidate, find
 from .stage2_verify import verify
 from .stage3_write import write
 
-GATE_EXIT = 3
+GATE_EXIT = 3      # verifier said DO NOT PROCEED — a clean "missed week"
+PUBLISH_EXIT = 4   # episode built fine, only the YouTube upload failed
 
 _MARKER = "KNOWLES_CANDIDATES"
 _MARKER_RE = re.compile(rf"<!--{_MARKER}\s*(.*?)\s*{_MARKER}-->", re.DOTALL)
@@ -147,21 +148,39 @@ def produce(candidate: Candidate, *, do_publish: bool, do_thumbnail: bool, repor
     lines += [f"**Title:** {title}", f"**Length:** ~{words} words / {duration/60:.1f} min",
               f"**Thumbnail:** {thumb_method}", ""]
 
-    # Stage 7 — publish.
+    # Stage 7 — publish. A publish failure must NOT discard a finished episode:
+    # the audio/video/script are already built and saved as artifacts. We catch
+    # the error, surface it in the issue comment, and exit with PUBLISH_EXIT so
+    # the run stays green and you can fix the upload without re-rendering.
+    exit_code = 0
     if do_publish:
-        result = stage7_publish.upload(mp4, title, description, thumb)
-        meta["publish"] = {"video_id": result.video_id, "url": result.url,
-                           "privacy": result.privacy, "thumbnail_set": result.thumbnail_set}
-        lines += [f"**Uploaded ({result.privacy}):** {result.url}",
-                  "" if result.thumbnail_set else "_(thumbnail not set — channel may need verification)_"]
-        print(result.url)
+        try:
+            result = stage7_publish.upload(mp4, title, description, thumb)
+            meta["publish"] = {"video_id": result.video_id, "url": result.url,
+                               "privacy": result.privacy, "thumbnail_set": result.thumbnail_set}
+            lines += [f"**Uploaded ({result.privacy}):** {result.url}",
+                      "" if result.thumbnail_set else "_(thumbnail not set — channel may need verification)_"]
+            print(result.url)
+        except Exception as exc:  # noqa: BLE001 - report any upload failure, keep the episode
+            import traceback
+            detail = f"{type(exc).__name__}: {exc}"
+            meta["publish"] = {"error": detail}
+            lines += [
+                "**Upload failed — episode was built but not published.**", "",
+                f"> {detail}", "",
+                f"The finished files are in the run's **knowles-episode** artifact "
+                f"(`episodes/{slug}/`). Fix the upload and re-run, or download "
+                f"`episode.mp4` and upload it to YouTube by hand.",
+            ]
+            print("PUBLISH FAILED:\n" + traceback.format_exc(), file=sys.stderr)
+            exit_code = PUBLISH_EXIT
     else:
         lines += ["**Publish skipped** (`--no-publish`). Artifacts are in "
                   f"`episodes/{slug}/`."]
 
     (ep / "meta.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
     _emit(lines, report)
-    return 0
+    return exit_code
 
 
 def cmd_produce(args: argparse.Namespace) -> int:

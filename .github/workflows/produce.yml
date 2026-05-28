@@ -97,8 +97,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh issue comment "$ISSUE" --body-file report.md
 
+      # rc 0 = ok, 3 = DO NOT PROCEED (clean miss), 4 = built but upload failed
+      # (error is in the issue comment + artifact). Anything else is a real bug.
       - name: Fail the run if production errored
-        if: ${{ steps.produce.outputs.rc != '0' && steps.produce.outputs.rc != '3' }}
+        if: ${{ steps.produce.outputs.rc != '0' && steps.produce.outputs.rc != '3' && steps.produce.outputs.rc != '4' }}
         run: |
           echo "Production failed (rc=${{ steps.produce.outputs.rc }})."
           exit 1
