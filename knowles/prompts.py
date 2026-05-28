@@ -20,7 +20,7 @@ true crime or true events.
 trap that sprung.
 - It carries a useful lesson an ordinary listener (especially an older one) could apply to \
 protect themselves.
-- It is RECENT (prefer the last 6–12 months) OR timeless-but-underreported.
+- {recency_clause}
 
 **What to avoid:**
 - Stories that are gory, graphic, or grim for shock's sake. Knowles is warm, not ghoulish.
@@ -100,6 +100,18 @@ fact unverified"** at the top and explain why. A missed week is fine. A false re
 
 **STORY + SOURCES:**
 {story_and_sources}
+
+---
+FINAL VERDICT (REQUIRED): After the entire fact-sheet, output as the very LAST line of your \
+response exactly one of the following, and nothing else on that line:
+VERDICT: PROCEED
+VERDICT: DO_NOT_PROCEED
+
+Choose DO_NOT_PROCEED only if the central "that-can't-be-real" fact is NOT ✅ CONFIRMED by at \
+least 2 independent credible sources. If that core fact IS confirmed, choose PROCEED even if \
+some peripheral details are single-source or unknown (list those under DO NOT CLAIM instead). \
+Note: any earlier "DO NOT PROCEED — core fact unverified" wording is only an example heading \
+from the instructions — your actual decision is THIS final VERDICT line.
 """
 
 # ---------------------------------------------------------------------------

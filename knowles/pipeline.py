@@ -17,7 +17,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from . import captions, config, stage4_voice, stage5_assemble, stage6_thumbnail, stage7_publish
+from . import captions, config, history, stage4_voice, stage5_assemble, stage6_thumbnail, stage7_publish
 from .stage1_find import Candidate, find
 from .stage2_verify import verify
 from .stage3_write import write
@@ -63,7 +63,7 @@ def _build_description(candidate: Candidate) -> str:
 # commands
 # --------------------------------------------------------------------------- #
 def cmd_find(args: argparse.Namespace) -> int:
-    markdown, candidates = find()
+    markdown, candidates = find(exclude=history.recent_hooks())
     payload = _candidates_payload(candidates)
 
     body = (
@@ -198,6 +198,13 @@ def produce(candidate: Candidate, *, do_publish: bool, do_thumbnail: bool, repor
                   f"`episodes/{slug}/`."]
 
     (ep / "meta.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    # Record the episode so Stage 1 never re-suggests it. Only reached when the
+    # story passed the verify gate and was actually built (gate path returns
+    # earlier and is intentionally NOT recorded).
+    published_url = meta.get("publish", {}).get("url")
+    history.record(slug, candidate.hook, title, published_url)
+
     _emit(lines, report)
     return exit_code
 
@@ -210,7 +217,7 @@ def cmd_produce(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    markdown, candidates = find()
+    markdown, candidates = find(exclude=history.recent_hooks())
     print(markdown)
     choice = input("\nPick a candidate (1/2/3, or 'q' to quit): ").strip()
     if choice.lower() in {"q", "quit", ""}:

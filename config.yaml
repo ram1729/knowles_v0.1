@@ -4,6 +4,8 @@
 show:
   name: "The Knowles Files"
   host: "Gregory Knowles"
+  # Stage 1 only suggests stories this fresh (events/coverage within N days).
+  recency_days: 7
 
 models:
   # Free-tier friendly. Search grounding is used for find + verify.

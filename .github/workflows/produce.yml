@@ -8,7 +8,7 @@ on:
     types: [created]
 
 permissions:
-  contents: read
+  contents: write   # to commit the produced.json ledger back to the repo
   issues: write
 
 # Silence the Node.js 20 deprecation notice on older action versions.
@@ -93,6 +93,22 @@ jobs:
           echo "Pipeline exit code: $RC"
           echo "rc=$RC" >> "$GITHUB_OUTPUT"
           set -e
+
+      # Persist the repeat-guard ledger so future weeks don't re-suggest this
+      # story. Only commits when produced.json actually changed (i.e. an episode
+      # was built; the verify-gate path leaves it untouched).
+      - name: Persist episode ledger
+        if: always()
+        run: |
+          if ! git diff --quiet -- produced.json; then
+            git config user.name "knowles-bot"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add produced.json
+            git commit -m "Log produced episode (ledger) [skip ci]"
+            git push origin HEAD:main
+          else
+            echo "produced.json unchanged — nothing to log."
+          fi
 
       - name: Upload episode artifacts
         if: always()
