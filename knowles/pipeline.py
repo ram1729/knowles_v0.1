@@ -17,7 +17,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from . import captions, config, history, stage4_voice, stage5_assemble, stage6_thumbnail, stage7_publish
+from . import captions, config, gemini_client, history, stage4_voice, stage5_assemble, stage6_thumbnail, stage7_publish
 from .stage1_find import Candidate, find
 from .stage2_verify import verify
 from .stage3_write import write
@@ -215,16 +215,28 @@ def cmd_produce(args: argparse.Namespace) -> int:
         candidate = _select_candidate(args)
         return produce(candidate, do_publish=not args.no_publish,
                        do_thumbnail=not args.no_thumbnail, report=report)
-    except Exception:  # noqa: BLE001 - self-report any crash to the issue comment
+    except Exception as exc:  # noqa: BLE001 - self-report any crash to the issue comment
         import traceback
         tb = traceback.format_exc()
         print(tb, file=sys.stderr)
         if report:
-            report.write_text(
-                "**Production error — the run crashed before finishing.**\n\n"
-                "```\n" + tb[-3500:] + "\n```\n",
-                encoding="utf-8",
-            )
+            if gemini_client.is_quota_error(exc):
+                report.write_text(
+                    "**Free Gemini quota exhausted for today.**\n\n"
+                    "All configured models hit their free daily request cap, so the "
+                    "episode couldn't be built right now. This is a free-tier limit, "
+                    "not a fault.\n\n"
+                    "Just reply `/produce N` again **after the quota resets** (daily, "
+                    "around 00:00 US Pacific). Fewer test runs per day will avoid it. "
+                    "To lift the cap entirely, enable billing on the Gemini API project.",
+                    encoding="utf-8",
+                )
+            else:
+                report.write_text(
+                    "**Production error — the run crashed before finishing.**\n\n"
+                    "```\n" + tb[-3500:] + "\n```\n",
+                    encoding="utf-8",
+                )
         return 1
 
 
