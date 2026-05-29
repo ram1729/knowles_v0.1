@@ -140,12 +140,14 @@ def produce(candidate: Candidate, *, do_publish: bool, do_thumbnail: bool, repor
     narration, duration = stage4_voice.narrate(script, ep / "narration.wav")
 
     # Captions, offset by the (trimmed) intro-sting length so they track the
-    # narration rather than the music. SRT is a selectable track; the styled
-    # ASS (big, left-column) is what gets burned into the video.
+    # narration rather than the music. Timing comes from the actual audio via
+    # Whisper (real sync); falls back to proportional if Whisper is unavailable.
+    # SRT is a selectable track; the styled ASS (big, left-column) is burned in.
     intro = config.ASSETS / "intro.mp3"
     offset = float(config.cfg("audio", "intro_seconds", default=5)) if intro.exists() else 0.0
-    srt = captions.build_srt(script, duration, ep / "captions.srt", start_offset=offset)
-    ass = captions.build_ass(script, duration, ep / "captions.ass", start_offset=offset)
+    srt = ep / "captions.srt"
+    ass = ep / "captions.ass"
+    sync_method = captions.build_captions(script, narration, duration, srt, ass, start_offset=offset)
 
     # Stage 6 — the unique, scroll-stopping NOIR thumbnail (YouTube still).
     concept = stage6_thumbnail.concept_for(script)
@@ -164,7 +166,7 @@ def produce(candidate: Candidate, *, do_publish: bool, do_thumbnail: bool, repor
     description = _build_description(candidate)
     meta = {
         "slug": slug, "title": title, "words": words, "duration_sec": round(duration, 1),
-        "thumbnail_method": thumb_method, "files": {
+        "thumbnail_method": thumb_method, "captions_sync": sync_method, "files": {
             "script": "script.txt", "audio": "episode.mp3", "video": "episode.mp4",
             "captions": "captions.srt", "thumbnail": "thumbnail.png" if thumb else None,
         },

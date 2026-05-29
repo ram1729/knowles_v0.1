@@ -67,13 +67,20 @@ def _ts_srt(seconds: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
-def build_srt(script: str, duration: float, out_path: Path, *, start_offset: float = 0.0) -> Path:
-    """Write an SRT covering `duration` seconds, starting at `start_offset`."""
+Cue = tuple  # (start_seconds, end_seconds, text)
+
+
+def _write_srt(cues: list[Cue], out_path: Path) -> Path:
     lines: list[str] = []
-    for i, (start, end, cue) in enumerate(_timed_cues(script, duration, start_offset), start=1):
+    for i, (start, end, cue) in enumerate(cues, start=1):
         lines += [str(i), f"{_ts_srt(start)} --> {_ts_srt(end)}", cue, ""]
     out_path.write_text("\n".join(lines), encoding="utf-8")
     return out_path
+
+
+def build_srt(script: str, duration: float, out_path: Path, *, start_offset: float = 0.0) -> Path:
+    """Write an SRT covering `duration` seconds, starting at `start_offset`."""
+    return _write_srt(_timed_cues(script, duration, start_offset), out_path)
 
 
 # --------------------------------------------------------------------------- #
@@ -93,9 +100,7 @@ def _escape_ass(text: str) -> str:
     return text.replace("{", "(").replace("}", ")").replace("\n", " ").strip()
 
 
-def build_ass(script: str, duration: float, out_path: Path, *, start_offset: float = 0.0) -> Path:
-    """Write a styled ASS: big serif, left-aligned, vertically centred, confined
-    to the left caption column so it sits cleanly over the darkened left stage."""
+def _write_ass(cues: list[Cue], out_path: Path) -> Path:
     w = int(config.cfg("video", "width", default=1920))
     h = int(config.cfg("video", "height", default=1080))
     font = config.cfg("captions", "font_name", default="DejaVu Serif")
@@ -127,7 +132,85 @@ Format: Layer, Start, End, Style, MarginL, MarginR, MarginV, Effect, Text
     # (0 margins => use the style's margins; Effect empty.)
     rows = [
         f"Dialogue: 0,{_ts_ass(s)},{_ts_ass(e)},Knowles,0,0,0,,{_escape_ass(c)}"
-        for s, e, c in _timed_cues(script, duration, start_offset)
+        for s, e, c in cues
     ]
     out_path.write_text(header + "\n".join(rows) + "\n", encoding="utf-8")
     return out_path
+
+
+def build_ass(script: str, duration: float, out_path: Path, *, start_offset: float = 0.0) -> Path:
+    """Write a styled ASS from the proportional cue timing (fallback path)."""
+    return _write_ass(_timed_cues(script, duration, start_offset), out_path)
+
+
+# --------------------------------------------------------------------------- #
+# REAL sync — caption timing from the actual audio (faster-whisper, free, CPU)
+# --------------------------------------------------------------------------- #
+def _pack_word_cues(words, max_chars: int) -> list[Cue]:
+    """Group Whisper word-timestamps into caption-sized cues, breaking on length
+    and on sentence ends so each cue's start/end match the spoken audio."""
+    cues: list[Cue] = []
+    buf: list[str] = []
+    cstart: float | None = None
+    prev_end = 0.0
+    for w in words:
+        token = w.word
+        if not token:
+            continue
+        if cstart is None:
+            cstart = w.start
+        tentative = ("".join(buf) + token).strip()
+        if len(tentative) > max_chars and buf:
+            cues.append((cstart, prev_end, "".join(buf).strip()))
+            buf, cstart = [token], w.start
+        else:
+            buf.append(token)
+        prev_end = w.end
+        if token.strip().endswith((".", "!", "?", "…")) and len("".join(buf).strip()) >= max_chars * 0.5:
+            cues.append((cstart, w.end, "".join(buf).strip()))
+            buf, cstart = [], None
+    if buf and cstart is not None:
+        cues.append((cstart, prev_end, "".join(buf).strip()))
+    return cues
+
+
+def _whisper_cues(wav_path: Path, start_offset: float) -> list[Cue] | None:
+    """Transcribe the narration with faster-whisper and return timed cues offset
+    into the final timeline. Returns None if faster-whisper isn't available."""
+    try:
+        from faster_whisper import WhisperModel
+    except Exception:
+        return None
+    try:
+        model_name = config.cfg("captions", "whisper_model", default="base.en")
+        max_chars = int(config.cfg("captions", "max_chars_per_cue", default=60))
+        model = WhisperModel(model_name, device="cpu", compute_type="int8")
+        seg_iter, _info = model.transcribe(
+            str(wav_path), beam_size=1, word_timestamps=True, vad_filter=True
+        )
+        segs = list(seg_iter)
+        words = [w for s in segs for w in (s.words or [])]
+        if words:
+            cues = _pack_word_cues(words, max_chars)
+        else:  # no word timings — fall back to segment-level
+            cues = [(s.start, s.end, s.text.strip()) for s in segs if s.text.strip()]
+        if not cues:
+            return None
+        return [(s + start_offset, e + start_offset, t) for s, e, t in cues]
+    except Exception:
+        return None
+
+
+def build_captions(script: str, wav_path: Path, duration: float, srt_out: Path, ass_out: Path,
+                   *, start_offset: float = 0.0) -> str:
+    """Write both SRT and ASS. Prefer real audio-aligned timing (Whisper); fall
+    back to proportional character timing. Returns which method was used."""
+    use_whisper = str(config.cfg("captions", "sync", default="whisper")).lower() == "whisper"
+    cues = _whisper_cues(wav_path, start_offset) if use_whisper else None
+    source = "whisper"
+    if not cues:
+        cues = _timed_cues(script, duration, start_offset)
+        source = "proportional"
+    _write_srt(cues, srt_out)
+    _write_ass(cues, ass_out)
+    return source

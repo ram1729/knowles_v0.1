@@ -44,9 +44,16 @@ jobs:
           path: ~/.u2net
           key: u2net-model-v1
 
-      - name: Install thumbnail extras (optional)
+      # Cache the Whisper model so caption sync doesn't re-download it weekly.
+      - name: Cache Whisper model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: whisper-base-en-v1
+
+      - name: Install thumbnail + caption-sync extras (optional)
         continue-on-error: true
-        run: pip install rembg onnxruntime
+        run: pip install rembg onnxruntime faster-whisper
 
       - name: Parse selection + load issue body
         id: parse

@@ -64,6 +64,10 @@ captions:
   font_name: "DejaVu Serif"
   font_size: 56             # ASS units at 1080p; bump higher for even larger text
   panel_ratio: 0.46         # left caption column = this fraction of the width
+  # Timing: "whisper" = transcribe the actual narration for true word-level sync
+  # (falls back to "proportional" char-timing if faster-whisper isn't installed).
+  sync: "whisper"
+  whisper_model: "base.en"  # base.en is fast+accurate on CPU; "small.en" = better, slower
 
 thumbnail:
   width: 1280
