@@ -21,7 +21,9 @@ def _clean(script: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
-def write(fact_sheet: str) -> str:
-    prompt = STAGE3_WRITE.format(fact_sheet=fact_sheet)
+def write(brief: str, last_week_block: str = "NONE") -> str:
+    """Write tonight's game episode from a story brief (real or fabricated) and,
+    when available, the block describing last week's verdict to reveal."""
+    prompt = STAGE3_WRITE.format(brief=brief, last_week_block=last_week_block or "NONE")
     script = gemini_client.generate_text(prompt, use_search=False, temperature=0.95)
     return _clean(script)

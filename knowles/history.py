@@ -47,15 +47,25 @@ def already_covered(hook: str) -> bool:
     return False
 
 
-def record(slug: str, hook: str, title: str, url: str | None = None) -> None:
+def last_episode() -> dict | None:
+    """The most recently recorded episode (for revealing its verdict next week)."""
     hist = load()
-    hist.append(
-        {
-            "date": f"{date.today():%Y-%m-%d}",
-            "slug": slug,
-            "hook": hook,
-            "title": title,
-            "url": url,
-        }
-    )
+    return hist[-1] if hist else None
+
+
+def record(slug: str, hook: str, title: str, url: str | None = None,
+           *, verdict: str | None = None, recap: str | None = None) -> None:
+    hist = load()
+    entry = {
+        "date": f"{date.today():%Y-%m-%d}",
+        "slug": slug,
+        "hook": hook,
+        "title": title,
+        "url": url,
+    }
+    if verdict:
+        entry["verdict"] = verdict          # "REAL" | "FAKE"
+    if recap:
+        entry["recap"] = recap              # spoiler-free one-liner for next week's open
+    hist.append(entry)
     LEDGER.write_text(json.dumps(hist, indent=2, ensure_ascii=False), encoding="utf-8")

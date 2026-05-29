@@ -79,21 +79,37 @@ background image are optional — the pipeline runs without them.
 
 ---
 
+## The format: "Real or Rubbish?"
+
+Every episode tells one story that is **either true or completely fabricated**, and
+the audience has to decide which, research it, and post their verdict in the
+comments. The video **never says** which it is — the honest answer is revealed at
+the **start of next week's episode**. Two rules keep it trustworthy:
+
+- Real stories still pass the **verify gate** (2+ independent credible sources).
+- No story ever names a real company or person, so a fabricated tale can't defame
+  anyone — and real vs fake look identical, which is the whole game.
+
+The integrity promise shifts from "every story is true" to **"the answer is always
+honest"**: real ones are genuinely verified, fakes are clearly a game, and the
+truth always lands the following week.
+
 ## The weekly run (GitHub Actions)
 
 1. **Monday 09:00 UTC** the *Find candidates* workflow runs (or trigger it
-   manually under the Actions tab) and opens an **issue** with 3 stories.
-2. You read it (~30 s) and reply **`/produce 2`** to pick story 2. (Reply
-   `/skip` to close the week — a missed week is fine.)
-3. The *Produce episode* workflow verifies, writes, voices, assembles, makes the
-   thumbnail and uploads the video **private**, then comments the YouTube link
-   back on the issue. If the verify gate fails it comments **DO NOT PROCEED** and
-   stops — nothing ships.
+   manually under the Actions tab) and opens an **issue** with 3 true stories.
+2. You read it (~30 s) and either:
+   - reply **`/produce 2`** to make true story #2 this week's episode, or
+   - reply **`/produce fake`** to run a fabricated episode instead, or
+   - reply `/skip` to close the week.
+3. The *Produce episode* workflow writes, voices, assembles (radio-show visual +
+   big captions), makes the noir thumbnail, and uploads the video **private** —
+   then comments the link back. The episode opens by revealing **last week's**
+   verdict. A real story that fails the verify gate comments **DO NOT PROCEED**.
 4. You open the link, glance, and hit Publish on YouTube. Done.
 
-The verify gate is the one rule that protects everything: if the central
-"that-can't-be-real" fact isn't confirmed by 2+ independent credible sources, the
-episode is dropped, automatically.
+You control the real/fake mix (the audience never knows which you picked). The
+ledger (`produced.json`) remembers each episode's verdict so next week can reveal it.
 
 ---
 

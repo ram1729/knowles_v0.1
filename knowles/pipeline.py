@@ -17,7 +17,8 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from . import captions, config, gemini_client, history, stage4_voice, stage5_assemble, stage6_thumbnail, stage7_publish
+from . import (captions, config, fabricate, gemini_client, history, stage4_voice,
+               stage5_assemble, stage6_thumbnail, stage7_publish)
 from .stage1_find import Candidate, find
 from .stage2_verify import verify
 from .stage3_write import write
@@ -47,25 +48,23 @@ def _candidates_from_text(text: str) -> list[Candidate]:
     return [Candidate.from_dict(d) for d in json.loads(raw)]
 
 
-def _build_description(candidate: Candidate) -> str:
-    """Spoiler-light description. We deliberately don't name the company or
-    people in the body — the show's whole point is that you go verify it
-    yourself. Sources are kept at the bottom as receipts for those who want
-    them after they've tried."""
+def _build_description() -> str:
+    """Game description. No links and no spoilers — the whole point is that the
+    audience decides, researches, and posts a verdict. The honest answer comes
+    in next week's episode."""
     parts = [
-        "This really happened — but I'll not hand you the names. Gregory never does.",
+        "Real… or rubbish?",
         "",
-        "Pick up your phone, search the story, and see for yourself. "
-        "Checking things yourself is a muscle worth keeping strong.",
+        "One story. It's either completely true, or I made the whole thing up. "
+        "Your job: decide which — then do your own digging and post your verdict "
+        "in the comments. REAL or RUBBISH, and how you worked it out.",
         "",
+        "I reveal the honest answer at the top of next week's episode. No peeking — "
+        "and no spoilers for the others. Mind how you go.",
     ]
-    if candidate.sources:
-        parts.append("Did your own digging first? Here are the receipts:")
-        parts += [f"- {s}" for s in candidate.sources]
-        parts.append("")
     footer = config.cfg("publish", "description_footer", default="")
     if footer:
-        parts.append(footer.strip())
+        parts += ["", footer.strip()]
     return "\n".join(parts).strip()
 
 
@@ -78,8 +77,11 @@ def cmd_find(args: argparse.Namespace) -> int:
 
     body = (
         f"{markdown}\n\n---\n"
-        f"**Reply `/produce N`** (N = 1, 2 or 3) on this issue to verify, produce "
-        f"and upload that story as a private video. A reply of `/skip` closes the week.\n\n"
+        f"**Reply `/produce N`** (N = 1, 2 or 3) to make that TRUE story into this week's "
+        f"episode — or **`/produce fake`** to run a fabricated one instead (the audience has "
+        f"to guess which!). `/skip` closes the week.\n\n"
+        f"Either way the video never says if it's real or fake — the answer is revealed at "
+        f"the top of next week's episode.\n\n"
         f"<!--{_MARKER}\n{payload}\n{_MARKER}-->\n"
     )
     Path(args.out).write_text(body, encoding="utf-8")
@@ -97,7 +99,7 @@ def _select_candidate(args: argparse.Namespace) -> Candidate:
     text = Path(args.from_body).read_text(encoding="utf-8") if args.from_body else \
         Path(args.candidates_file).read_text(encoding="utf-8")
     candidates = _candidates_from_text(text)
-    idx = args.select
+    idx = int(str(args.select).strip())
     match = next((c for c in candidates if c.id == idx), None)
     if match is None and 1 <= idx <= len(candidates):
         match = candidates[idx - 1]
@@ -106,33 +108,56 @@ def _select_candidate(args: argparse.Namespace) -> Candidate:
     return match
 
 
-def produce(candidate: Candidate, *, do_publish: bool, do_thumbnail: bool, report: Path | None) -> int:
-    slug = f"{date.today():%Y-%m-%d}-{_slugify(candidate.hook)}"
+def _last_week_block() -> str:
+    """Describe last week's episode so tonight can open by revealing its verdict."""
+    prev = history.last_episode()
+    if not prev or not prev.get("verdict"):
+        return "NONE"
+    recap = prev.get("recap") or prev.get("title") or "last week's story"
+    truth = "REAL — it genuinely happened" if prev["verdict"] == "REAL" else "RUBBISH — it was made up"
+    return f'Last week\'s teaser: "{recap}". Reveal the honest answer warmly: it was {truth}.'
+
+
+def produce(candidate: Candidate | None, *, mode: str, do_publish: bool, do_thumbnail: bool,
+            report: Path | None) -> int:
+    """Produce one game episode. mode="real" uses a verified true story (subject
+    to the trust gate); mode="fake" fabricates a fictional one. Neither reveals
+    the answer — that lands at the top of next week's episode."""
+    last_week_block = _last_week_block()
+
+    # ---- Brief + verdict (real path runs the trust gate first) -------------
+    if mode == "fake":
+        brief = fabricate.fabricate()
+        verdict, hook = "FAKE", None
+    else:
+        fact = verify(candidate.story_and_sources())
+        if not fact.proceed:
+            reasoning = fact.text.strip()
+            if len(reasoning) > 2500:
+                reasoning = reasoning[:2500].rstrip() + "\n\n… (truncated)"
+            lines = [
+                "## The Knowles Files", "",
+                f"**DO NOT PROCEED** — {fact.reason}", "",
+                "A missed week is fine. A false reveal is not. Try `/produce N` with a "
+                "different candidate, `/produce fake`, or `/skip` to close the week.", "",
+                "<details><summary>Verifier's reasoning</summary>", "", reasoning, "", "</details>",
+            ]
+            _emit(lines, report)
+            print("DO NOT PROCEED — core fact unverified. Stopping.", file=sys.stderr)
+            return GATE_EXIT
+        brief, verdict, hook = fact.text, "REAL", candidate.hook
+
+    # ---- Write + concept (no episode dir needed yet) -----------------------
+    script = write(brief, last_week_block)
+    concept = stage6_thumbnail.concept_for(script)
+    title = concept.video_title or (hook or "The Knowles Files")
+    recap = concept.video_title or title
+
+    # ---- Now we know the title: create the episode dir + save inputs -------
+    slug = f"{date.today():%Y-%m-%d}-{_slugify(title)}"
     ep = config.episode_dir(slug)
-    lines: list[str] = [f"## The Knowles Files — {slug}", "", f"**Story:** {candidate.hook}", ""]
-
-    # Stage 2 — verify (the trust gate).
-    fact = verify(candidate.story_and_sources())
-    (ep / "factsheet.md").write_text(fact.text, encoding="utf-8")
-    if not fact.proceed:
-        # Surface the verifier's own reasoning in the comment so the rejection
-        # is judgeable without downloading the artifact. Trim to keep it readable.
-        reasoning = fact.text.strip()
-        if len(reasoning) > 2500:
-            reasoning = reasoning[:2500].rstrip() + "\n\n… (truncated — full text in factsheet.md)"
-        lines += [
-            f"**DO NOT PROCEED** — {fact.reason}", "",
-            "A missed week is fine. A false reveal is not. Try `/produce N` with a "
-            "different candidate, or `/skip` to close the week.", "",
-            "<details><summary>Verifier's reasoning</summary>", "",
-            reasoning, "", "</details>",
-        ]
-        _emit(lines, report)
-        print("DO NOT PROCEED — core fact unverified. Stopping.", file=sys.stderr)
-        return GATE_EXIT
-
-    # Stage 3 — write.
-    script = write(fact.text)
+    lines: list[str] = [f"## The Knowles Files — {slug}", "", f"**This week:** {verdict} (kept secret in-video)", ""]
+    (ep / ("brief.md" if mode == "fake" else "factsheet.md")).write_text(brief, encoding="utf-8")
     (ep / "script.txt").write_text(script, encoding="utf-8")
     words = len(script.split())
 
@@ -149,9 +174,7 @@ def produce(candidate: Candidate, *, do_publish: bool, do_thumbnail: bool, repor
     ass = ep / "captions.ass"
     sync_method = captions.build_captions(script, narration, duration, srt, ass, start_offset=offset)
 
-    # Stage 6 — the unique, scroll-stopping NOIR thumbnail (YouTube still).
-    concept = stage6_thumbnail.concept_for(script)
-    title = concept.video_title or candidate.hook
+    # Stage 6 — the unique, scroll-stopping NOIR thumbnail (concept already built).
     thumb: Path | None = None
     thumb_method = "skipped"
     if do_thumbnail:
@@ -163,9 +186,10 @@ def produce(candidate: Candidate, *, do_publish: bool, do_thumbnail: bool, repor
     mp3 = stage5_assemble.build_audio(narration, ep / "episode.mp3")
     mp4 = stage5_assemble.build_video(mp3, ass, ep / "episode.mp4", background=thumb)
 
-    description = _build_description(candidate)
+    description = _build_description()
     meta = {
         "slug": slug, "title": title, "words": words, "duration_sec": round(duration, 1),
+        "verdict": verdict, "mode": mode,
         "thumbnail_method": thumb_method, "captions_sync": sync_method, "files": {
             "script": "script.txt", "audio": "episode.mp3", "video": "episode.mp4",
             "captions": "captions.srt", "thumbnail": "thumbnail.png" if thumb else None,
@@ -207,11 +231,10 @@ def produce(candidate: Candidate, *, do_publish: bool, do_thumbnail: bool, repor
 
     (ep / "meta.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    # Record the episode so Stage 1 never re-suggests it. Only reached when the
-    # story passed the verify gate and was actually built (gate path returns
-    # earlier and is intentionally NOT recorded).
+    # Record the episode: feeds next week's verdict reveal AND keeps Stage 1
+    # from re-suggesting it. Gate path returns earlier and is NOT recorded.
     published_url = meta.get("publish", {}).get("url")
-    history.record(slug, candidate.hook, title, published_url)
+    history.record(slug, hook or title, title, published_url, verdict=verdict, recap=recap)
 
     _emit(lines, report)
     return exit_code
@@ -220,8 +243,12 @@ def produce(candidate: Candidate, *, do_publish: bool, do_thumbnail: bool, repor
 def cmd_produce(args: argparse.Namespace) -> int:
     report = Path(args.report) if args.report else None
     try:
+        sel = str(args.select).strip().lower()
+        if sel in ("fake", "rubbish", "f"):
+            return produce(None, mode="fake", do_publish=not args.no_publish,
+                           do_thumbnail=not args.no_thumbnail, report=report)
         candidate = _select_candidate(args)
-        return produce(candidate, do_publish=not args.no_publish,
+        return produce(candidate, mode="real", do_publish=not args.no_publish,
                        do_thumbnail=not args.no_thumbnail, report=report)
     except Exception as exc:  # noqa: BLE001 - self-report any crash to the issue comment
         import traceback
@@ -251,13 +278,16 @@ def cmd_produce(args: argparse.Namespace) -> int:
 def cmd_run(args: argparse.Namespace) -> int:
     markdown, candidates = find(exclude=history.recent_hooks())
     print(markdown)
-    choice = input("\nPick a candidate (1/2/3, or 'q' to quit): ").strip()
-    if choice.lower() in {"q", "quit", ""}:
+    choice = input("\nPick a candidate (1/2/3), 'f' for a FAKE episode, or 'q' to quit: ").strip().lower()
+    if choice in {"q", "quit", ""}:
         print("No pick. Closing the week.")
         return 0
+    if choice in {"f", "fake", "rubbish"}:
+        return produce(None, mode="fake", do_publish=not args.no_publish,
+                       do_thumbnail=not args.no_thumbnail, report=None)
     idx = int(choice)
     candidate = next((c for c in candidates if c.id == idx), candidates[idx - 1])
-    return produce(candidate, do_publish=not args.no_publish,
+    return produce(candidate, mode="real", do_publish=not args.no_publish,
                    do_thumbnail=not args.no_thumbnail, report=None)
 
 
@@ -285,7 +315,8 @@ def build_parser() -> argparse.ArgumentParser:
     src.add_argument("--candidate-file", help="JSON file with a single candidate object")
     src.add_argument("--candidates-file", help="JSON array of candidates (use with --select)")
     src.add_argument("--from-body", help="Text/issue-body file containing the candidates marker")
-    pr.add_argument("--select", type=int, default=1, help="Which candidate id/index to produce")
+    pr.add_argument("--select", default="1",
+                    help="Candidate id/index to produce, or 'fake' for a fabricated episode")
     pr.add_argument("--no-publish", action="store_true")
     pr.add_argument("--no-thumbnail", action="store_true")
     pr.add_argument("--report", help="Write a markdown summary here (for the issue comment)")

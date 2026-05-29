@@ -62,14 +62,14 @@ jobs:
           ISSUE: ${{ github.event.issue.number }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          # `|| true` keeps the pipefail+errexit shell from aborting if the
-          # comment lacks an explicit number (we want to default to 1).
-          N=$(printf '%s' "$BODY" | grep -oiE '/produce[[:space:]]+[0-9]+' | grep -oE '[0-9]+' | head -1 || true)
-          if ! printf '%s' "$N" | grep -qE '^[0-9]+$'; then N=1; fi
-          echo "Parsed candidate selection: $N"
+          # Accepts "/produce 2" (real story #2) or "/produce fake" (fabricated).
+          # `|| true` keeps pipefail+errexit from aborting when there's no match.
+          N=$(printf '%s' "$BODY" | grep -oiE '/produce[[:space:]]+(fake|[0-9]+)' | grep -oiE '(fake|[0-9]+)' | head -1 | tr '[:upper:]' '[:lower:]' || true)
+          if [ -z "$N" ]; then N=1; fi
+          echo "Parsed selection: $N"
           echo "n=$N" >> "$GITHUB_OUTPUT"
           gh issue view "$ISSUE" --json body -q .body > issue_body.md
-          printf 'Working on candidate **#%s**…' "$N" > report.md
+          printf 'Working on selection **%s**…' "$N" > report.md
 
       - name: Acknowledge
         env:
@@ -79,7 +79,7 @@ jobs:
         # NB: block scalar — YAML treats ` #` in a plain scalar as a comment,
         # which truncated this line and broke the previous run.
         run: |
-          gh issue comment "$ISSUE" --body "👀 Producing candidate number ${N} — this takes a few minutes."
+          gh issue comment "$ISSUE" --body "👀 Producing selection ${N} — this takes a few minutes."
 
       - name: Produce (verify -> write -> voice -> assemble -> thumbnail -> publish)
         id: produce
