@@ -48,9 +48,19 @@ def _candidates_from_text(text: str) -> list[Candidate]:
 
 
 def _build_description(candidate: Candidate) -> str:
-    parts = [candidate.summary, ""]
+    """Spoiler-light description. We deliberately don't name the company or
+    people in the body — the show's whole point is that you go verify it
+    yourself. Sources are kept at the bottom as receipts for those who want
+    them after they've tried."""
+    parts = [
+        "This really happened — but I'll not hand you the names. Gregory never does.",
+        "",
+        "Pick up your phone, search the story, and see for yourself. "
+        "Checking things yourself is a muscle worth keeping strong.",
+        "",
+    ]
     if candidate.sources:
-        parts.append("Sources:")
+        parts.append("Did your own digging first? Here are the receipts:")
         parts += [f"- {s}" for s in candidate.sources]
         parts.append("")
     footer = config.cfg("publish", "description_footer", default="")
@@ -137,22 +147,19 @@ def produce(candidate: Candidate, *, do_publish: bool, do_thumbnail: bool, repor
     srt = captions.build_srt(script, duration, ep / "captions.srt", start_offset=offset)
     ass = captions.build_ass(script, duration, ep / "captions.ass", start_offset=offset)
 
-    # Stage 6 (built before the video so the plate can serve as the visual) —
-    # thumbnail (YouTube still) + video plate (Knowles right, left caption stage).
+    # Stage 6 — the unique, scroll-stopping NOIR thumbnail (YouTube still).
     concept = stage6_thumbnail.concept_for(script)
     title = concept.video_title or candidate.hook
     thumb: Path | None = None
-    plate: Path | None = None
     thumb_method = "skipped"
     if do_thumbnail:
-        thumb, plate, thumb_method = stage6_thumbnail.build_visuals(
-            concept, ep / "thumbnail.png", ep / "video_plate.png"
-        )
+        thumb, thumb_method = stage6_thumbnail.build_thumbnail(concept, ep / "thumbnail.png")
 
-    # Stage 5 — assemble. The plate persists as the video's static visual; the
-    # big left-column captions burn over its darkened left stage.
+    # Stage 5 — assemble. The video is the persistent "radio show" visual (a fixed
+    # dark image) with the big left-column captions dominant on top. If no radio
+    # image is supplied, build_video falls back to this episode's thumbnail.
     mp3 = stage5_assemble.build_audio(narration, ep / "episode.mp3")
-    mp4 = stage5_assemble.build_video(mp3, ass, ep / "episode.mp4", background=plate)
+    mp4 = stage5_assemble.build_video(mp3, ass, ep / "episode.mp4", background=thumb)
 
     description = _build_description(candidate)
     meta = {
@@ -160,7 +167,6 @@ def produce(candidate: Candidate, *, do_publish: bool, do_thumbnail: bool, repor
         "thumbnail_method": thumb_method, "files": {
             "script": "script.txt", "audio": "episode.mp3", "video": "episode.mp4",
             "captions": "captions.srt", "thumbnail": "thumbnail.png" if thumb else None,
-            "video_plate": "video_plate.png" if plate else None,
         },
     }
 

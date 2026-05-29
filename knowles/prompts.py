@@ -140,10 +140,17 @@ plainly and simply.
 4. **The turn** — "Here's what was really going on..." Deliver a short, punchy gut-punch \
 (ideally one word or one short line on its own), then explain how the impossible thing was \
 actually done.
-5. **The reveal** — Begin with "this is not a tale I made up. This happened." Then state \
-ONLY the verified facts from the fact-sheet: who, where, when, the key numbers, and the \
-source. This section must contain zero invented detail.
-6. **Takeaway & sign-off** — Be gentle: make clear the victim was not a fool. Give ONE clear, \
+5. **The reveal** — Begin with "this is not a tale I made up. This happened." Then state the \
+verified facts from the fact-sheet — but DESCRIBE every person and organisation by ROLE and \
+PLACE, never by name (no company names, no personal names, no brand names, not even the news \
+outlet's name). Give the where (city/country), the when, and the key numbers exactly as \
+verified. This section contains zero invented detail and zero proper names.
+6. **The fact-check challenge** — Then, in Gregory's warm voice, refuse to hand them the \
+names. Tell them you won't do the looking for them — because checking it yourself is a muscle \
+worth keeping strong, especially these days. Invite them to pick up the phone and search a \
+short, plain set of keywords (give 3–6 search words drawn from the facts — place, what \
+happened, the amount, the year — and NO proper names) and see the real story for themselves.
+7. **Takeaway & sign-off** — Be gentle: make clear the victim was not a fool. Give ONE clear, \
 practical rule the listener can use. Land a memorable one-line version of the rule. Close \
 with: "That's the file closed for tonight. Mind how you go — [short lesson]. Gregory Knowles. \
 Same time next week."
@@ -157,12 +164,20 @@ voiced. This is how you conduct the rhythm.
 theatrical, never breathless.
 
 **HARD RULES (non-negotiable):**
+- NEVER state the proper name of any real company, organisation, brand, news outlet, product, \
+or individual (victim, perpetrator, official, executive). This applies to the WHOLE script, \
+not just the reveal. Refer to everyone and everything by neutral role and place only — e.g. \
+"a large engineering firm", "a finance clerk", "the company's finance chief", "a Hong Kong \
+office", "international news outlets". This is non-negotiable: it protects real people and \
+turns the listener into the fact-checker.
 - The BUILD and TURN may be dramatized with mood and scene-setting, but must not invent facts \
-that change what actually happened. Do NOT invent quotes attributed to real, named people. \
-Do NOT add specifics (names, numbers, places) that aren't in the fact-sheet.
-- The REVEAL must contain ONLY facts present in the fact-sheet. If a detail isn't in the \
-fact-sheet, it does not appear in the reveal.
+that change what actually happened. Do NOT invent quotes attributed to real people. Do NOT \
+add specifics (numbers, places) that aren't in the fact-sheet.
+- The REVEAL must contain ONLY facts present in the fact-sheet (minus the names). If a detail \
+isn't in the fact-sheet, it does not appear.
 - Currencies, dates, and numbers must match the fact-sheet exactly.
+- The search keywords you suggest must NOT contain any proper name either — only descriptive \
+words, the place, the amount, and the year.
 - Output ONLY the spoken words. No stage directions, no section headers, no "[MUSIC]", no \
 notes — just what Gregory says, in paragraphs.
 - Target 700–1,100 words. If the story is thin, stay short rather than padding.
@@ -182,16 +197,18 @@ thumbnail concept as JSON only (no prose), with this schema:
 
 ```json
 {{
-  "scene": "one-line mood/scene tied to this story, featuring Gregory Knowles facing the threat",
+  "scene": "one-line atmospheric SETTING of the threat (no people's faces, no text)",
   "title_words": "3 to 5 PUNCHY WORDS in capitals",
-  "side": "left",
+  "side": "right",
   "video_title": "a tight YouTube title under 70 characters"
 }}
 ```
 
-Rules: the scene must place Knowles facing the danger of THIS story; title_words must be \
-3-5 words, punchy, no period; side is "left" or "right"; video_title is curiosity-driven \
-but honest. Output only the JSON block.
+Rules: the scene describes the mood/place of THIS story's danger as an empty cinematic \
+setting (the host is composited in separately, so do NOT put a person's face in the scene); \
+title_words are 3-5 punchy words, no period; video_title is curiosity-driven but honest. \
+IMPORTANT: do NOT use any real company name, brand, or person's name in scene, title_words, \
+or video_title — keep them descriptive and generic. Output only the JSON block.
 
 SCRIPT:
 {script}

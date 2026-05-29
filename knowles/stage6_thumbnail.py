@@ -14,6 +14,7 @@ thumbnail is always produced.
 from __future__ import annotations
 
 import json
+import math
 import re
 import urllib.parse
 import urllib.request
@@ -21,7 +22,7 @@ from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 
 from . import config, gemini_client
 from .prompts import THUMBNAIL_CONCEPT, THUMBNAIL_STANDING
@@ -130,16 +131,56 @@ def _gradient_bg(w: int, h: int) -> Image.Image:
     return base
 
 
+def _vignette(img: Image.Image) -> Image.Image:
+    """Darken the edges for a cinematic, focused frame."""
+    w, h = img.size
+    mask = Image.new("L", (w, h), 0)
+    d = ImageDraw.Draw(mask)
+    d.ellipse([-w * 0.18, -h * 0.18, w * 1.18, h * 1.18], fill=255)
+    mask = mask.filter(ImageFilter.GaussianBlur(int(min(w, h) * 0.16)))
+    dark = Image.new("RGB", (w, h), (0, 0, 0))
+    return Image.composite(img.convert("RGB"), dark, mask)
+
+
+def _noir_grade(img: Image.Image) -> Image.Image:
+    """House look: desaturated, high-contrast, dimmed, faint warm tint, vignette."""
+    img = img.convert("RGB")
+    img = ImageEnhance.Color(img).enhance(0.55)
+    img = ImageEnhance.Contrast(img).enhance(1.18)
+    img = ImageEnhance.Brightness(img).enhance(0.82)
+    r, g, b = img.split()
+    r = r.point(lambda v: min(255, int(v * 1.06)))
+    b = b.point(lambda v: int(v * 0.92))
+    img = Image.merge("RGB", (r, g, b))
+    return _vignette(img)
+
+
+def _hand_drawn_underline(draw, x0: int, x1: int, y: int, color, *, amp: float = 4.0, weight: int = 6) -> None:
+    """A loose, slightly wavy marker underline (deterministic sine wobble)."""
+    span = max(1, x1 - x0)
+    pts = []
+    steps = max(8, span // 14)
+    for i in range(steps + 1):
+        t = i / steps
+        x = x0 + t * span
+        # gentle wave + a slight downward sag, like a real pen stroke
+        wob = math.sin(t * math.pi * 2.2) * amp + math.sin(t * math.pi) * (amp * 0.6)
+        pts.append((x, y + wob))
+    # draw a couple of overlapping passes for a marker feel
+    for off in (0, 2):
+        draw.line([(px, py + off) for px, py in pts], fill=color, width=weight, joint="curve")
+
+
 def _draw_title(base: Image.Image, words: str, *, text_side: str) -> Image.Image:
-    """Draw the title words on the half opposite Knowles, with an outline."""
+    """Draw the title on the half opposite Knowles, with an outline and a
+    hand-drawn amber underline beneath the last line (house style)."""
     w, h = base.size
     draw = ImageDraw.Draw(base)
-    font = _load_font(int(h * 0.135))
+    font = _load_font(int(h * 0.155))           # bigger, poster-scale
     col_w = int(w * 0.52)
-    margin = int(w * 0.05)
+    margin = int(w * 0.055)
     lines = _wrap(draw, words, font, col_w) or [words]
 
-    # Shrink to fit at most 3 lines.
     while len(lines) > 3 and font.size > 24:
         font = _load_font(int(font.size * 0.88))
         lines = _wrap(draw, words, font, col_w)
@@ -148,11 +189,19 @@ def _draw_title(base: Image.Image, words: str, *, text_side: str) -> Image.Image
     total_h = line_h * len(lines)
     y = (h - total_h) // 2
     x0 = margin if text_side == "left" else (w - col_w - margin)
+    last_extent = (x0, x0 + col_w, y)
     for line in lines:
         for dx, dy in ((-3, 0), (3, 0), (0, -3), (0, 3), (-3, -3), (3, 3), (-3, 3), (3, -3)):
             draw.text((x0 + dx, y + dy), line, font=font, fill=(0, 0, 0))
         draw.text((x0, y), line, font=font, fill=(255, 240, 210))
+        bbox = draw.textbbox((x0, y), line, font=font)
+        last_extent = (x0, bbox[2], bbox[3])
         y += line_h
+
+    # Hand-drawn underline beneath the final line, warm amber.
+    lx0, lx1, ly = last_extent
+    _hand_drawn_underline(draw, lx0, lx1, ly + int(h * 0.02), (240, 176, 64),
+                          amp=max(3.0, h * 0.006), weight=max(5, int(h * 0.010)))
     return base
 
 
@@ -256,49 +305,17 @@ def _darken_for_text(base: Image.Image, text_side: str) -> Image.Image:
     return Image.alpha_composite(base.convert("RGBA"), scrim)
 
 
-def _darken_left_panel(base: Image.Image) -> Image.Image:
-    """Lay a semi-opaque 'caption stage' over the left column, fading into the
-    scene, so large left-aligned captions read clearly for senior viewers."""
-    w, h = base.size
-    panel_ratio = float(config.cfg("captions", "panel_ratio", default=0.46))
-    panel_w = int(w * panel_ratio)
-    feather = int(w * 0.06)
-    scrim = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    sd = ImageDraw.Draw(scrim)
-    sd.rectangle([0, 0, panel_w, h], fill=(0, 0, 0, 165))
-    for i in range(feather):  # soft right edge into the imagery
-        a = int(165 * (1 - i / feather))
-        sd.line([(panel_w + i, 0), (panel_w + i, h)], fill=(0, 0, 0, a))
-    return Image.alpha_composite(base.convert("RGBA"), scrim)
-
-
 # --------------------------------------------------------------------------- #
 # composers
 # --------------------------------------------------------------------------- #
-def _hybrid_layers(concept: Concept, w: int, h: int) -> tuple[Image.Image, Image.Image | None, str]:
-    """Generate the shared layers once: AI (or gradient) background + Knowles
-    cutout. Reused for both the thumbnail and the video plate."""
-    bg = _pollinations_bg(concept.scene, w, h, _seed_from(concept.title_words))
-    bg_method = "ai" if bg is not None else "gradient"
-    base = bg if bg is not None else _gradient_bg(w, h)
-    return base, _knowles_cutout(), bg_method
-
-
 def _render_thumbnail(base: Image.Image, person: Image.Image | None, concept: Concept, out_path: Path) -> None:
-    """YouTube still: Knowles on the RIGHT, big title words on the LEFT."""
-    base = _darken_for_text(base, "left")
+    """The unique noir thumbnail: cinematic graded scene, Gregory on the RIGHT,
+    big serif title on the LEFT with a hand-drawn amber underline."""
+    base = _noir_grade(base)
+    base = _darken_for_text(base, "left")          # extra scrim so the title pops
     if person is not None:
         base = _paste_knowles(base, person, "right")
     base = _draw_title(base, concept.title_words, text_side="left")
-    base.convert("RGB").save(out_path, "PNG")
-
-
-def _render_plate(base: Image.Image, person: Image.Image | None, out_path: Path) -> None:
-    """Video visual: Knowles on the RIGHT, darkened LEFT caption stage, NO title
-    (the burned-in captions live in that left column instead)."""
-    base = _darken_left_panel(base)
-    if person is not None:
-        base = _paste_knowles(base, person, "right")
     base.convert("RGB").save(out_path, "PNG")
 
 
@@ -354,46 +371,32 @@ def _compose_nano_banana(concept: Concept, out_path: Path) -> tuple[Path, str] |
 # --------------------------------------------------------------------------- #
 # public entry
 # --------------------------------------------------------------------------- #
-def build_visuals(concept: Concept, thumb_path: Path, plate_path: Path) -> tuple[Path, Path, str]:
-    """Produce both the YouTube thumbnail and the video plate.
+def build_thumbnail(concept: Concept, out_path: Path) -> tuple[Path, str]:
+    """Produce the unique, scroll-stopping NOIR thumbnail (YouTube still).
 
-    Returns (thumbnail_path, plate_path, method). The plate is the persistent
-    video visual (Knowles right + darkened left caption stage). Engine chosen
-    by config thumbnail.engine; always degrades gracefully.
+    Returns (path, method). Engine chosen by config thumbnail.engine; always
+    degrades gracefully so a thumbnail is produced.
     """
-    import shutil
-
     engine = str(config.cfg("thumbnail", "engine", default="hybrid")).lower()
     w = int(config.cfg("thumbnail", "width", default=1280))
     h = int(config.cfg("thumbnail", "height", default=720))
 
     if engine == "nano_banana":
-        result = _compose_nano_banana(concept, thumb_path)
+        result = _compose_nano_banana(concept, out_path)
         if result:
-            # nano_banana returns a baked image; the plate reuses it.
-            shutil.copyfile(thumb_path, plate_path)
-            return thumb_path, plate_path, result[1]
+            return result
         engine = "hybrid"  # model declined/errored — fall through
 
     if engine == "pillow":
-        _compose_pillow(concept, thumb_path)
-        shutil.copyfile(thumb_path, plate_path)
-        return thumb_path, plate_path, "pillow"
+        return _compose_pillow(concept, out_path)
 
-    # default: hybrid — render both from one set of layers.
+    # default: hybrid noir — unique AI scene + graded + Gregory + title.
     try:
-        base, person, bg_method = _hybrid_layers(concept, w, h)
-        _render_thumbnail(base.copy(), person, concept, thumb_path)
-        _render_plate(base.copy(), person, plate_path)
-        method = f"hybrid_{bg_method}" + ("" if person is not None else "_nocutout")
-        return thumb_path, plate_path, method
+        bg = _pollinations_bg(concept.scene, w, h, _seed_from(concept.title_words))
+        bg_method = "ai" if bg is not None else "gradient"
+        base = bg if bg is not None else _gradient_bg(w, h)
+        person = _knowles_cutout()
+        _render_thumbnail(base, person, concept, out_path)
+        return out_path, f"hybrid_noir_{bg_method}" + ("" if person is not None else "_nocutout")
     except Exception:
-        _compose_pillow(concept, thumb_path)
-        shutil.copyfile(thumb_path, plate_path)
-        return thumb_path, plate_path, "pillow"
-
-
-def build_thumbnail(concept: Concept, out_path: Path) -> tuple[Path, str]:
-    """Back-compat single-output helper (thumbnail only)."""
-    thumb, _plate, method = build_visuals(concept, out_path, out_path.with_name("video_plate.png"))
-    return thumb, method
+        return _compose_pillow(concept, out_path)

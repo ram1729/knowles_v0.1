@@ -104,34 +104,52 @@ def build_audio(narration: Path, out_mp3: Path) -> Path:
     return out_mp3
 
 
+def _resolve_video_bg(background: Path | None) -> Path | None:
+    """Pick the persistent video visual per config video.background_mode."""
+    mode = str(config.cfg("video", "background_mode", default="radio")).lower()
+    radio = config.ASSETS / str(config.cfg("video", "radio_bg", default="radio_bg.png"))
+    asset_bg = config.ASSETS / "background.png"
+
+    if mode == "radio" and radio.exists():
+        return radio
+    if mode == "color":
+        return None
+    # "episode" mode, or radio image missing: use the episode background, then
+    # any generic asset background, then the radio image if it somehow exists.
+    if background and background.exists():
+        return background
+    if radio.exists():
+        return radio
+    if asset_bg.exists():
+        return asset_bg
+    return None
+
+
 def build_video(audio: Path, subtitles: Path | None, out_mp4: Path, background: Path | None = None) -> Path:
-    """Render a static-visual MP4 with burned-in captions, matched to audio length.
+    """Render the persistent "radio show" MP4: one calm, dark image for the whole
+    episode with large captions dominant on top.
 
     `subtitles` may be a styled .ass (preferred — carries its own large
     left-column style) or a plain .srt (a default style is forced on).
-
-    Visual source priority:
-      1. `background` (the episode video plate) — persists for the whole video,
-      2. assets/background.png,
-      3. a solid colour from config.
     """
     w = int(config.cfg("video", "width", default=1920))
     h = int(config.cfg("video", "height", default=1080))
     fps = int(config.cfg("video", "fps", default=24))
     bg_color = config.cfg("video", "bg_color", default="0b0d12")
-    asset_bg = config.ASSETS / "background.png"
+    panel_ratio = float(config.cfg("captions", "panel_ratio", default=0.46))
+    scrim_global = float(config.cfg("video", "scrim_global", default=0.40))
+    caption_panel = float(config.cfg("video", "caption_panel", default=0.45))
 
-    if background and background.exists():
-        bg_img: Path | None = background
-    elif asset_bg.exists():
-        bg_img = asset_bg
-    else:
-        bg_img = None
+    bg_img = _resolve_video_bg(background)
 
     work = out_mp4.parent
+    # Cover-fit the image, then darken: a global scrim keeps the whole frame calm
+    # and non-distracting, and an extra panel over the left caption column makes
+    # the big captions read clearly for senior viewers.
     base_vf = (
-        f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
-        f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps}"
+        f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1,fps={fps}"
+        f",drawbox=x=0:y=0:w={w}:h={h}:color=black@{scrim_global}:t=fill"
+        f",drawbox=x=0:y=0:w={int(w * panel_ratio)}:h={h}:color=black@{caption_panel}:t=fill"
     )
 
     # Build the optional captions clause.

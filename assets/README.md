@@ -5,11 +5,31 @@ degrades gracefully — but supplying these gives you the full house style.
 
 | File | Used by | If missing |
 |------|---------|------------|
+| `radio_bg.png` | **The persistent "radio show" video background** (1920×1080) shown for the whole episode under the big captions | Falls back to the episode's thumbnail, then a solid dark colour |
 | `knowles_portrait.png` | Thumbnail — his face. Hybrid engine cuts him out and composites onto a free AI scene | Thumbnail falls back to a dark card with title text |
 | `knowles_cutout.png` *(optional)* | A pre-made **transparent** PNG of just Gregory. If present, the hybrid thumbnail skips background-removal entirely (faster, no rembg) | Background-removal runs on `knowles_portrait.png` automatically |
-| `intro.mp3` | Prepended to every episode's audio | Skipped |
-| `outro.mp3` | Appended to every episode's audio | Skipped |
-| `background.png` | Static visual behind the captions in the MP4 (1920×1080) | Solid dark colour from `config.yaml` |
+| `intro.mp3` | First few seconds prepended to every episode's audio | Skipped |
+| `outro.mp3` | First few seconds appended to every episode's audio | Skipped |
+| `background.png` *(legacy)* | Only used if `video.background_mode: episode/color` and no radio image | Solid dark colour from `config.yaml` |
+
+### Making `radio_bg.png` (the on-air video background)
+
+This is the calm, dark image the viewer sees for the whole episode while Gregory
+talks — the **big captions sit on the left**, so keep that side simple/empty and
+put any subject on the **right**. The pipeline darkens it further automatically,
+so it stays non-distracting. Make it once, reuse forever. Suggested prompt:
+
+```
+A moody film-noir radio studio at night, 16:9, very dark and atmospheric. An
+"ON AIR" sign glowing warm amber, a vintage broadcast microphone and a hint of
+a cab-driver's cap and tweed on the RIGHT side, deep shadows, single warm key
+light, heavy desaturation, cinematic grain. The entire LEFT HALF is dark, empty
+negative space (no objects, no text) reserved for large captions. No text,
+no watermark, no faces in close-up. Calm, classy, understated.
+```
+
+Save the result as `assets/radio_bg.png` and upload it like the others. Tune how
+dark it gets with `video.scrim_global` / `video.caption_panel` in `config.yaml`.
 
 ### Making `knowles_cutout.png` once (optional, recommended)
 

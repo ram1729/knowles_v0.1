@@ -43,8 +43,19 @@ video:
   width: 1920
   height: 1080
   fps: 24
-  # Fallback background colour if assets/background.png is absent (hex, no #).
+  # Fallback background colour if no image is available (hex, no #).
   bg_color: "0b0d12"
+  # The video is a "radio show": one persistent, dark, non-distracting image
+  # for the whole episode, with the large captions dominant on top.
+  #   radio  -> use assets/radio_bg.png (recommended; one fixed image every week)
+  #   episode-> use this episode's thumbnail as the video visual
+  #   color  -> solid bg_color
+  background_mode: "radio"
+  radio_bg: "radio_bg.png"
+  # Darkening so captions always read. Whole frame is dimmed by scrim_global;
+  # the left caption column gets caption_panel extra on top (0..1 opacity).
+  scrim_global: 0.40
+  caption_panel: 0.45
 
 captions:
   # Senior-friendly: large text in a left column, Knowles + imagery on the right.
@@ -63,9 +74,11 @@ thumbnail:
   # Free AI background provider model (Pollinations). "flux" or "turbo".
   pollinations_model: "flux"
   # FIXED house style line (Section 3). Only scene + title words change weekly.
+  # Noir house look — consistent every week, scroll-stopping on a phone.
   style_line: >-
-    cinematic, moody, warm low light, slightly desaturated; high contrast so he
-    reads on a small phone screen.
+    film-noir cinematic still, moody and atmospheric, deep shadows, single warm
+    low key light, heavy desaturation with a faint amber tint, high contrast,
+    grainy, dramatic — reads clearly as a small phone thumbnail.
 
 publish:
   privacy: "private"        # private | unlisted | public
